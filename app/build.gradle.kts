@@ -125,6 +125,7 @@ dependencies {
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   implementation(libs.play.services.location)
+  implementation(libs.mlkit.barcode.scanning)
   implementation(libs.retrofit)
   implementation(libs.ktor.server.core)
   implementation(libs.ktor.server.cio)

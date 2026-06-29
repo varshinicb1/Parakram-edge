@@ -77,3 +77,12 @@ data class WolDevice(
     val lastWoken: Long? = null
 )
 
+data class QRCodeMapping(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val pattern: String,
+    val action: String,
+    val label: String,
+    val isActive: Boolean = true
+)
+
+

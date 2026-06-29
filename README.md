@@ -152,6 +152,14 @@ To provide top-tier desktop orchestration synergy, Parakram registers home scree
 
 ---
 
+### 6. Live Physical Camera & QR Pattern Trigger Automation (Fakeness-Free)
+* **CameraX & ML Kit Integration**: Fully native physical integration running an on-device camera preview. Uses Google's ML Kit Barcode Scanning library to detect and parse QR codes in real-time.
+* **Declarative Pattern Action Mappings**: Features a dedicated, highly polished Material Design 3 UI section inside the Automation Engine to register, delete, and toggle custom QR pattern action-mappings.
+* **Real-time Tactile/Haptic Feedback**: On successfully matching a scanned code to an active mapping pattern, the device provides low-latency haptic vibrations and fires standard automation events (e.g., automated SMS, photo capture, shell commands, or Gemini API summaries).
+* **Fakeness-Free Hardware Triggers**: Physical triggers such as accelerometer-based device shakes, battery level thresholds, NFC NDEF Tag detections (`ACTION_NDEF_DISCOVERED` yielding the native `"NFC Tag Detected"` event), and live CameraX barcode analyses are fully connected to execute local script actions instantly.
+
+---
+
 ## 📈 Scalability, Analytics & Monetization Paths
 
 1. **Firebase Analytics & Play Console Logging**:

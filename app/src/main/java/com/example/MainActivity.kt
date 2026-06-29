@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
       }
     } else if (NfcAdapter.ACTION_NDEF_DISCOVERED == action) {
       val dataUri: Uri? = intent.data
+      viewModel.evaluateTriggers("NFC Tag Detected", "Physical NDEF tag tapped: ${dataUri?.toString() ?: "Raw NDEF Payload"}")
       if (dataUri != null) {
         viewModel.initiatePairing(dataUri.toString(), "")
       } else {

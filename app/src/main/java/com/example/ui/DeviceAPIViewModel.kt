@@ -294,6 +294,70 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         _automationLogs.value = emptyList()
     }
 
+    // QR Code Mappings State
+    private val _qrCodeMappings = MutableStateFlow<List<com.example.data.QRCodeMapping>>(listOf(
+        com.example.data.QRCodeMapping(
+            id = "qrm_1",
+            pattern = "SECURE_DOOR_ACCESS",
+            action = "Trigger Phone Haptics",
+            label = "Haptic Door Entry Confirmation",
+            isActive = true
+        ),
+        com.example.data.QRCodeMapping(
+            id = "qrm_2",
+            pattern = "LOG_PAYMENT_CONFIRMED",
+            action = "Send Automated SMS",
+            label = "Audit Logging Callback",
+            isActive = true
+        ),
+        com.example.data.QRCodeMapping(
+            id = "qrm_3",
+            pattern = "CAMERA_PHOTO_CAPTURE",
+            action = "Capture Photo",
+            label = "Security Guard Camera Snap",
+            isActive = true
+        ),
+        com.example.data.QRCodeMapping(
+            id = "qrm_4",
+            pattern = "SERVER_REBOOT_TRIGGER",
+            action = "Execute Shell Command",
+            label = "Reboot Local Web Node",
+            isActive = false
+        )
+    ))
+    val qrCodeMappings: StateFlow<List<com.example.data.QRCodeMapping>> = _qrCodeMappings.asStateFlow()
+
+    fun addQRCodeMapping(pattern: String, action: String, label: String) {
+        val newMapping = com.example.data.QRCodeMapping(
+            pattern = pattern,
+            action = action,
+            label = label
+        )
+        _qrCodeMappings.value = _qrCodeMappings.value + newMapping
+        addAutomationLog("➕ Added QR Code pattern mapping: '$label' (Pattern: '$pattern') -> $action")
+    }
+
+    fun removeQRCodeMapping(id: String) {
+        val mapping = _qrCodeMappings.value.find { it.id == id }
+        if (mapping != null) {
+            _qrCodeMappings.value = _qrCodeMappings.value.filter { it.id != id }
+            addAutomationLog("❌ Removed QR Code pattern mapping: '${mapping.label}'")
+        }
+    }
+
+    fun toggleQRCodeMapping(id: String) {
+        _qrCodeMappings.value = _qrCodeMappings.value.map {
+            if (it.id == id) {
+                val newState = !it.isActive
+                addAutomationLog("🔄 Toggled QR Code mapping '${it.label}': ${if (newState) "ACTIVE" else "INACTIVE"}")
+                it.copy(isActive = newState)
+            } else {
+                it
+            }
+        }
+    }
+
+
     // Plugin marketplace
     private val _plugins = MutableStateFlow<List<Plugin>>(emptyList())
     val plugins: StateFlow<List<Plugin>> = _plugins.asStateFlow()
@@ -1250,15 +1314,32 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     fun evaluateTriggers(triggerType: String, eventPayload: String = "") {
         viewModelScope.launch {
             val activeRules = _workflows.value.filter { it.isActive && it.trigger == triggerType }
-            if (activeRules.isEmpty()) return@launch
             
-            addAutomationLog("🔔 Trigger match: '$triggerType' with payload: '$eventPayload'. Evaluating ${activeRules.size} active rule(s)...")
-            activeRules.forEach { rule ->
-                addAutomationLog("⚡ Executing rule: '${rule.title}' in response to '$triggerType'...")
-                executeAction(rule.action, rule.title, eventPayload)
+            if (activeRules.isEmpty() && triggerType != "QR Code Scanned") return@launch
+            
+            if (activeRules.isNotEmpty()) {
+                addAutomationLog("🔔 Trigger match: '$triggerType' with payload: '$eventPayload'. Evaluating ${activeRules.size} active rule(s)...")
+                activeRules.forEach { rule ->
+                    addAutomationLog("⚡ Executing rule: '${rule.title}' in response to '$triggerType'...")
+                    executeAction(rule.action, rule.title, eventPayload)
+                }
+            }
+            
+            if (triggerType == "QR Code Scanned") {
+                val matchedMappings = _qrCodeMappings.value.filter { it.isActive && eventPayload.contains(it.pattern, ignoreCase = true) }
+                if (matchedMappings.isNotEmpty()) {
+                    addAutomationLog("🔍 Pattern match: Found ${matchedMappings.size} custom QR mapping(s) for scanned code: '$eventPayload'.")
+                    matchedMappings.forEach { mapping ->
+                        addAutomationLog("⚡ Executing QR Action: '${mapping.label}' (Pattern matches: '${mapping.pattern}') -> ${mapping.action}")
+                        executeAction(mapping.action, "QR Custom Mapping: ${mapping.label}", eventPayload)
+                    }
+                } else {
+                    addAutomationLog("ℹ️ Scanned QR code: '$eventPayload' did not match any active pattern in the QR Mapping list.")
+                }
             }
         }
     }
+
 
     private suspend fun executeAction(actionType: String, workflowTitle: String, triggerPayload: String) {
         try {

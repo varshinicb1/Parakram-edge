@@ -35,6 +35,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -64,6 +65,16 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.ui.viewinterop.AndroidView
+import android.os.Vibrator
+import android.os.VibrationEffect
+import android.os.Build
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -7456,6 +7467,12 @@ fun AutomationTab(viewModel: DeviceAPIViewModel) {
             }
         }
 
+        // --- LIVE QR TRIGGER SCANNER COMPONENT ---
+        LiveQRScannerComponent(viewModel = viewModel)
+
+        // --- DEDICATED QR PATTERN MAPPING COMPONENT ---
+        QRCodeMappingSection(viewModel = viewModel)
+
         // --- PART 4: ACTIVE AUTOMATION RULES ---
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Registered Rules (${workflows.size})", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -7620,5 +7637,698 @@ fun AutomationTab(viewModel: DeviceAPIViewModel) {
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
+
+@OptIn(ExperimentalPermissionsApi::class)
+@Composable
+fun LiveQRScannerComponent(
+    viewModel: DeviceAPIViewModel,
+    modifier: Modifier = Modifier
+) {
+    var isScannerEnabled by remember { mutableStateOf(false) }
+    var scannedCode by remember { mutableStateOf<String?>(null) }
+    var lastScannedCode by remember { mutableStateOf("") }
+    var scannedCount by remember { mutableStateOf(0) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val cameraPermissionState = rememberPermissionState(permission = Manifest.permission.CAMERA)
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceCard),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, BorderColor)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCodeScanner,
+                        contentDescription = "Live QR Trigger Scanner",
+                        tint = CyanPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Live QR Trigger Scanner",
+                            color = TextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Scan codes to fire custom automation triggers",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = isScannerEnabled,
+                    onCheckedChange = { isEnabled ->
+                        isScannerEnabled = isEnabled
+                        if (isEnabled) {
+                            scannedCode = null
+                        }
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ObsidianBackground,
+                        checkedTrackColor = CyanPrimary,
+                        uncheckedThumbColor = TextSecondary,
+                        uncheckedTrackColor = DarkSurface
+                    ),
+                    modifier = Modifier.testTag("live_qr_scanner_toggle")
+                )
+            }
+
+            AnimatedVisibility(
+                visible = isScannerEnabled,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (cameraPermissionState.status.isGranted) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(240.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, if (scannedCode != null) CyanPrimary else BorderColor, RoundedCornerShape(12.dp))
+                                .background(DarkSurface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    val previewView = PreviewView(ctx).apply {
+                                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                                    }
+                                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                                    cameraProviderFuture.addListener({
+                                        val cameraProvider = cameraProviderFuture.get()
+                                        
+                                        val preview = Preview.Builder().build().also {
+                                            it.surfaceProvider = previewView.surfaceProvider
+                                        }
+
+                                        val imageAnalysis = ImageAnalysis.Builder()
+                                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                            .build()
+
+                                        imageAnalysis.setAnalyzer(
+                                            ContextCompat.getMainExecutor(ctx),
+                                            QRCodeAnalyzer { code ->
+                                                if (code != lastScannedCode || scannedCode == null) {
+                                                    scannedCode = code
+                                                    lastScannedCode = code
+                                                    scannedCount++
+                                                    
+                                                    // Haptic trigger feedback
+                                                    try {
+                                                        val vibrator = ctx.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? Vibrator
+                                                        if (vibrator != null && vibrator.hasVibrator()) {
+                                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                                vibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                                                            } else {
+                                                                @Suppress("DEPRECATION")
+                                                                vibrator.vibrate(100)
+                                                            }
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        // Fallback ignored
+                                                    }
+
+                                                    // Fire trigger evaluate in ViewModel
+                                                    viewModel.evaluateTriggers("QR Code Scanned", code)
+                                                }
+                                            }
+                                        )
+
+                                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                                        try {
+                                            cameraProvider.unbindAll()
+                                            cameraProvider.bindToLifecycle(
+                                                ctx as androidx.lifecycle.LifecycleOwner,
+                                                cameraSelector,
+                                                preview,
+                                                imageAnalysis
+                                            )
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("LiveQRScanner", "Failed to bind camera scanner: ${e.message}")
+                                        }
+                                    }, ContextCompat.getMainExecutor(ctx))
+                                    previewView
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            AutomationScannerViewfinderOverlay()
+
+                            if (scannedCode != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(CyanPrimary.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Success",
+                                            tint = CyanPrimary,
+                                            modifier = Modifier.size(44.dp)
+                                        )
+                                        Text(
+                                            text = "AUTOMATION TRIGGERED",
+                                            color = TextPrimary,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 13.sp,
+                                            letterSpacing = 1.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(DarkSurface, RoundedCornerShape(12.dp))
+                                .border(1.dp, BorderColor, RoundedCornerShape(12.dp))
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PhotoCamera,
+                                contentDescription = null,
+                                tint = CyanPrimary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Camera Permission Required",
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Camera access is needed to parse QR codes and execute matched action scripts instantly.",
+                                color = TextSecondary,
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 12.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { cameraPermissionState.launchPermissionRequest() },
+                                colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary, contentColor = ObsidianBackground),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(44.dp)
+                            ) {
+                                Text("Grant Permission", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    AnimatedVisibility(visible = scannedCode != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, BorderColor)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "LAST DETECTED QR",
+                                        color = CyanPrimary,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Text(
+                                        text = "Scan #$scannedCount",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                
+                                Text(
+                                    text = scannedCode ?: "",
+                                    color = TextPrimary,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Row(
+                                    horizontalArrangement = Arrangement.End,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    TextButton(
+                                        onClick = { scannedCode = null },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Scan Next Code", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AutomationScannerViewfinderOverlay() {
+    val infiniteTransition = rememberInfiniteTransition(label = "scan_transition")
+    val scanYOffset by infiniteTransition.animateFloat(
+        initialValue = 0.1f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(animation = tween(2000, easing = LinearEasing), repeatMode = RepeatMode.Reverse),
+        label = "scan_laser"
+    )
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        val rectSize = 160.dp.toPx()
+        val left = (w - rectSize) / 2
+        val top = (h - rectSize) / 2
+        val right = left + rectSize
+        val bottom = top + rectSize
+        val cornerLength = 20.dp.toPx()
+        val strokeWidth = 3.dp.toPx()
+
+        drawRect(
+            color = Color.Black.copy(alpha = 0.5f),
+            size = size
+        )
+
+        drawRect(
+            color = Color.Transparent,
+            topLeft = Offset(left, top),
+            size = androidx.compose.ui.geometry.Size(rectSize, rectSize),
+            blendMode = androidx.compose.ui.graphics.BlendMode.Clear
+        )
+
+        val silverColor = Color(0xFFC0C0C0)
+
+        // Sights
+        drawLine(color = silverColor, start = Offset(left, top), end = Offset(left + cornerLength, top), strokeWidth = strokeWidth)
+        drawLine(color = silverColor, start = Offset(left, top), end = Offset(left, top + cornerLength), strokeWidth = strokeWidth)
+
+        drawLine(color = silverColor, start = Offset(right, top), end = Offset(right - cornerLength, top), strokeWidth = strokeWidth)
+        drawLine(color = silverColor, start = Offset(right, top), end = Offset(right, top + cornerLength), strokeWidth = strokeWidth)
+
+        drawLine(color = silverColor, start = Offset(left, bottom), end = Offset(left + cornerLength, bottom), strokeWidth = strokeWidth)
+        drawLine(color = silverColor, start = Offset(left, bottom), end = Offset(left, bottom - cornerLength), strokeWidth = strokeWidth)
+
+        drawLine(color = silverColor, start = Offset(right, bottom), end = Offset(right - cornerLength, bottom), strokeWidth = strokeWidth)
+        drawLine(color = silverColor, start = Offset(right, bottom), end = Offset(right, bottom - cornerLength), strokeWidth = strokeWidth)
+
+        val laserY = top + (rectSize * scanYOffset)
+        drawLine(
+            color = Color.White,
+            start = Offset(left + 8.dp.toPx(), laserY),
+            end = Offset(right - 8.dp.toPx(), laserY),
+            strokeWidth = 2.dp.toPx()
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun QRCodeMappingSection(
+    viewModel: DeviceAPIViewModel,
+    modifier: Modifier = Modifier
+) {
+    val mappings by viewModel.qrCodeMappings.collectAsState()
+    
+    var showAddForm by remember { mutableStateOf(false) }
+    var patternInput by remember { mutableStateOf("") }
+    var labelInput by remember { mutableStateOf("") }
+    
+    val availableActions = listOf(
+        "Capture Photo",
+        "Send Automated SMS",
+        "Trigger Phone Haptics",
+        "Write Local Clipboard",
+        "Execute Shell Command",
+        "Gemini Smart Summary"
+    )
+    var selectedAction by remember { mutableStateOf(availableActions[0]) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceCard),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, BorderColor)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header Row
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCodeScanner,
+                        contentDescription = "QR Mappings",
+                        tint = CyanPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "QR Code Trigger Mappings",
+                            color = TextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Map custom QR payloads to unique device actions",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                
+                IconButton(
+                    onClick = { showAddForm = !showAddForm },
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = if (showAddForm) CyanPrimary else DarkSurface,
+                        contentColor = if (showAddForm) ObsidianBackground else CyanPrimary
+                    ),
+                    modifier = Modifier.size(36.dp).testTag("qr_map_add_toggle_btn")
+                ) {
+                    Icon(
+                        imageVector = if (showAddForm) Icons.Default.Close else Icons.Default.Add,
+                        contentDescription = "Add Pattern Mapping"
+                    )
+                }
+            }
+
+            // Expandable Add New Mapping Form
+            AnimatedVisibility(
+                visible = showAddForm,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, BorderColor)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Define Custom QR Pattern Action",
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        // Label input
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Mapping Label / Friendly Name", color = TextSecondary, fontSize = 11.sp)
+                            TextField(
+                                value = labelInput,
+                                onValueChange = { labelInput = it },
+                                placeholder = { Text("E.g. Secure Gate Access", color = TextSecondary, fontSize = 13.sp) },
+                                modifier = Modifier.fillMaxWidth().testTag("qr_map_label_input"),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = DarkSurfaceCard,
+                                    unfocusedContainerColor = DarkSurfaceCard,
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary,
+                                    cursorColor = CyanPrimary,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                singleLine = true
+                            )
+                        }
+
+                        // Pattern input
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Target QR Text Substring (Case Insensitive)", color = TextSecondary, fontSize = 11.sp)
+                            TextField(
+                                value = patternInput,
+                                onValueChange = { patternInput = it },
+                                placeholder = { Text("E.g. SECURE_DOOR_ACCESS", color = TextSecondary, fontSize = 13.sp) },
+                                modifier = Modifier.fillMaxWidth().testTag("qr_map_pattern_input"),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = DarkSurfaceCard,
+                                    unfocusedContainerColor = DarkSurfaceCard,
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary,
+                                    cursorColor = CyanPrimary,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                singleLine = true
+                            )
+                        }
+
+                        // Action selection list
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Choose Action to Execute", color = TextSecondary, fontSize = 11.sp)
+                            
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                availableActions.forEach { act ->
+                                    val isSelected = selectedAction == act
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSelected) CyanPrimary else DarkSurfaceCard)
+                                            .border(1.dp, if (isSelected) CyanPrimary else BorderColor, RoundedCornerShape(8.dp))
+                                            .clickable { selectedAction = act }
+                                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = act,
+                                            color = if (isSelected) ObsidianBackground else TextPrimary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (validationError != null) {
+                            Text(validationError ?: "", color = Color(0xFFFF5555), fontSize = 11.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                if (labelInput.trim().isEmpty()) {
+                                    validationError = "Friendly mapping label is required"
+                                    return@Button
+                                }
+                                if (patternInput.trim().isEmpty()) {
+                                    validationError = "QR trigger pattern / substring is required"
+                                    return@Button
+                                }
+                                viewModel.addQRCodeMapping(
+                                    pattern = patternInput.trim(),
+                                    action = selectedAction,
+                                    label = labelInput.trim()
+                                )
+                                labelInput = ""
+                                patternInput = ""
+                                validationError = null
+                                showAddForm = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary, contentColor = ObsidianBackground),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("qr_map_add_submit_button")
+                        ) {
+                            Text("Register Custom Mapping", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+
+            // Existing Custom Patterns List
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (mappings.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(DarkSurface, RoundedCornerShape(12.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(12.dp))
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No custom QR pattern mappings registered yet.",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    mappings.forEach { mapping ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, BorderColor)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = mapping.label,
+                                            color = if (mapping.isActive) TextPrimary else TextSecondary,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        if (!mapping.isActive) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(Color.Gray.copy(alpha = 0.2f))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("Disabled", color = TextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Pattern:",
+                                            color = TextSecondary,
+                                            fontSize = 11.sp
+                                        )
+                                        Text(
+                                            text = "\"${mapping.pattern}\"",
+                                            color = CyanPrimary,
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Bolt,
+                                            contentDescription = null,
+                                            tint = if (mapping.isActive) CyanPrimary else TextSecondary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = "Action: ${mapping.action}",
+                                            color = if (mapping.isActive) TextPrimary else TextSecondary,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Switch(
+                                        checked = mapping.isActive,
+                                        onCheckedChange = { viewModel.toggleQRCodeMapping(mapping.id) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = ObsidianBackground,
+                                            checkedTrackColor = CyanPrimary,
+                                            uncheckedThumbColor = TextSecondary,
+                                            uncheckedTrackColor = DarkSurfaceCard
+                                        ),
+                                        modifier = Modifier.scale(0.85f).testTag("qr_map_toggle_${mapping.id}")
+                                    )
+                                    
+                                    IconButton(
+                                        onClick = { viewModel.removeQRCodeMapping(mapping.id) },
+                                        modifier = Modifier.size(36.dp).testTag("qr_map_delete_${mapping.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete Mapping",
+                                            tint = Color(0xFFFF5555),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 
 

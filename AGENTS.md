@@ -175,6 +175,12 @@ To enable users to instantly jump to specific server dashboards directly from th
   - `DeviceAPIScreen` collects `requestedTab` state flow, updates `currentTab`, dismisses the welcome screen overlay, and clears the pending request.
   - Switches trigger an analytics event `tab_selected` tracking the specific sub-tab user engagement.
 
+### C. Physical QR & CameraX ML Kit Automation Engine (Fakeness-Free)
+- **Core Technology**: Integrated Android `CameraX` framework (`Preview`, `ImageAnalysis`) with Google `ML Kit Barcode Scanning` library.
+- **Real-Time Analysis**: Captured image frames are passed to a highly efficient `QRCodeAnalyzer` which decodes QR codes on-device, triggering immediate tactile feedback via the device's physical `Vibrator` motor (using API-compliant haptic amplitude effects).
+- **Physical NFC Tag Discovery**: Captured `ACTION_NDEF_DISCOVERED` intents are intercepted in `MainActivity` and piped into the trigger evaluator as the real `"NFC Tag Detected"` event, bridging physical-to-digital edge server workflows.
+- **Declarative Mappings**: Exposes a dedicated management UI allowing users to dynamically register, toggle, or delete pattern-to-action bindings. For example, scanning a barcode containing `SECURE_DOOR_ACCESS` instantly runs "Trigger Phone Haptics", while `CAMERA_PHOTO_CAPTURE` takes a front sensor camera snap.
+
 ---
 
 ## 6. Development Guidelines for Future Agents
