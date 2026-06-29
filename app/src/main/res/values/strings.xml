@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">Pocket Edge Server</string>
+    <string name="shortcut_dashboard_short">Dashboard</string>
+    <string name="shortcut_dashboard_long">Launch Developer Dashboard</string>
+    <string name="shortcut_automation_short">Automate</string>
+    <string name="shortcut_automation_long">Launch Automation Engine</string>
+    <string name="shortcut_console_short">Console</string>
+    <string name="shortcut_console_long">Launch Diagnostics Console</string>
 </resources>

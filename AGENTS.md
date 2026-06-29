@@ -154,7 +154,30 @@ To transition Parakram into a high-revenue, multi-million download app, execute 
 
 ---
 
-## 5. Development Guidelines for Future Agents
+## 5. Modern Visual Onboarding, App Shortcuts & Analytics Event Protocol
+
+Parakram is equipped with modern user experience flows and telemetry analytics to maximize conversion, retention, and integration:
+
+### A. Immersive Welcome Onboarding Overlay
+- **Behavior**: On first boot or whenever requested, an immersive onboarding overlay displays to introduce users to Pocket Edge Server capabilities, security settings, and permissions.
+- **State**: Controlled dynamically in `DeviceAPIScreen` via a persistent/saveable state (`showWelcomeScreen`).
+- **Telemetry**: Dismissing the onboarding triggers a specialized Firebase Analytics metric `welcome_dismissed` to track user onboarding completion rates.
+
+### B. Dynamic Launcher App Shortcuts
+To enable users to instantly jump to specific server dashboards directly from their home screen, Parakram registers static Launcher Shortcuts (`/app/src/main/res/xml/shortcuts.xml`).
+- **Shortcuts Configured**:
+  1. **Dashboard Shortcut**: Instantly opens the main developer status tab.
+  2. **Automation Shortcut**: Bypasses the welcome screen and opens the local automation flow.
+  3. **Console Shortcut**: Directly enters the real-time diagnostics terminal.
+- **Protocol**: 
+  - Android home screen launcher triggers `MainActivity` with intent action `"com.example.ACTION_SHORTCUT"` and a string extra `tab`.
+  - `MainActivity` intercepts the action and calls `viewModel.requestTab(tab)`.
+  - `DeviceAPIScreen` collects `requestedTab` state flow, updates `currentTab`, dismisses the welcome screen overlay, and clears the pending request.
+  - Switches trigger an analytics event `tab_selected` tracking the specific sub-tab user engagement.
+
+---
+
+## 6. Development Guidelines for Future Agents
 - **M3 Touch Targets**: Every button must be exactly `48.dp` in height (or use `Modifier.height(48.dp)`) to provide top-tier touch precision on hardware screens.
 - **State Management**: Keep ViewModels free of raw database connections; always route through Ktor or local repositories.
 - **Compile and Build**: Verify all changes by running `compile_applet` to confirm compilation is green.

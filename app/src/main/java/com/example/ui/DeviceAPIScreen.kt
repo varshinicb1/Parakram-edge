@@ -26,6 +26,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -114,6 +115,16 @@ fun DeviceAPIScreen(
     var showQRHandshakeScreen by remember { mutableStateOf(false) }
     var showWelcomeScreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
 
+    val requestedTab by viewModel.requestedTab.collectAsState()
+    
+    LaunchedEffect(requestedTab) {
+        requestedTab?.let { tab ->
+            currentTab = tab
+            showWelcomeScreen = false
+            viewModel.clearRequestedTab()
+        }
+    }
+
     androidx.compose.runtime.DisposableEffect(viewModel, currentUser) {
         val permissionsGranted = permissionsList.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
@@ -132,7 +143,12 @@ fun DeviceAPIScreen(
             if (currentUser != null && !showQRHandshakeScreen && !showWelcomeScreen) {
                 DeviceAPIBottomNav(
                     currentTab = currentTab,
-                    onTabSelected = { currentTab = it }
+                    onTabSelected = { tab ->
+                        currentTab = tab
+                        viewModel.logAnalyticsEvent("tab_selected", android.os.Bundle().apply {
+                            putString("tab_id", tab)
+                        })
+                    }
                 )
             }
         },
@@ -145,7 +161,10 @@ fun DeviceAPIScreen(
         ) {
             if (showWelcomeScreen) {
                 WelcomeScreen(
-                    onDismiss = { showWelcomeScreen = false }
+                    onDismiss = { 
+                        showWelcomeScreen = false 
+                        viewModel.logAnalyticsEvent("welcome_dismissed")
+                    }
                 )
             } else if (currentUser == null) {
                 AuthScreen(
@@ -217,34 +236,62 @@ fun DeviceAPIBottomNav(
     currentTab: String,
     onTabSelected: (String) -> Unit
 ) {
-    NavigationBar(
-        containerColor = DarkSurface,
+    Surface(
+        color = DarkSurface,
         tonalElevation = 8.dp,
-        modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+        modifier = Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
-        val items = listOf(
-            Triple("dashboard", "Dashboard", Icons.Default.DeveloperMode),
-            Triple("automation", "Automate", Icons.Default.Bolt),
-            Triple("server", "Server", Icons.Default.Dns),
-            Triple("adb", "ADB", Icons.Default.Terminal),
-            Triple("console", "Console", Icons.Default.Code),
-            Triple("profile", "Secure", Icons.Default.Lock)
-        )
-        
-        items.forEach { (tab, label, icon) ->
-            NavigationBarItem(
-                selected = currentTab == tab,
-                onClick = { onTabSelected(tab) },
-                icon = { Icon(icon, contentDescription = label) },
-                label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = ObsidianBackground,
-                    selectedTextColor = CyanPrimary,
-                    indicatorColor = CyanPrimary,
-                    unselectedIconColor = TextSecondary,
-                    unselectedTextColor = TextSecondary
-                )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 8.dp, horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val items = listOf(
+                Triple("dashboard", "Dashboard", Icons.Default.DeveloperMode),
+                Triple("automation", "Automate", Icons.Default.Bolt),
+                Triple("server", "Server", Icons.Default.Dns),
+                Triple("adb", "ADB", Icons.Default.Terminal),
+                Triple("console", "Console", Icons.Default.Code),
+                Triple("profile", "Secure", Icons.Default.Lock)
             )
+            
+            items.forEach { (tab, label, icon) ->
+                val isSelected = currentTab == tab
+                val bgBrush = if (isSelected) GoldMetallicBrush else Brush.linearGradient(colors = listOf(Color.Transparent, Color.Transparent))
+                val contentColor = if (isSelected) Color.Black else TextSecondary
+                val borderModifier = if (isSelected) Modifier.border(1.dp, GoldBase, RoundedCornerShape(12.dp)) else Modifier
+                
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(bgBrush)
+                        .then(borderModifier)
+                        .clickable { onTabSelected(tab) }
+                        .padding(vertical = 8.dp, horizontal = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        icon, 
+                        contentDescription = label,
+                        tint = contentColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = label,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = contentColor,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
         }
     }
 }
@@ -1635,7 +1682,7 @@ fun ConsoleTab(
                     .testTag("console_logs_list"),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(filteredLogs, key = { it.id }) { log ->
+                items(filteredLogs) { log ->
                     ConsoleLogItem(log)
                 }
             }

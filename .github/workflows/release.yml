@@ -34,10 +34,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Build Debug & Release APKs
-        run: ./gradlew assembleDebug assembleRelease
+        run: ./gradlew assembleDebug assembleRelease --no-daemon
 
       - name: Build Release Bundle (AAB)
-        run: ./gradlew bundleRelease
+        run: ./gradlew bundleRelease --no-daemon
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4

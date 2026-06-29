@@ -41,7 +41,12 @@ class MainActivity : ComponentActivity() {
   private fun handleIntent(intent: Intent?) {
     if (intent == null) return
     val action = intent.action
-    if (NfcAdapter.ACTION_NDEF_DISCOVERED == action) {
+    if ("com.example.ACTION_SHORTCUT" == action) {
+      val tab = intent.getStringExtra("tab")
+      if (tab != null) {
+        viewModel.requestTab(tab)
+      }
+    } else if (NfcAdapter.ACTION_NDEF_DISCOVERED == action) {
       val dataUri: Uri? = intent.data
       if (dataUri != null) {
         viewModel.initiatePairing(dataUri.toString(), "")

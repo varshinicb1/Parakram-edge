@@ -37,13 +37,14 @@ jobs:
       - name: Grant Execute Permission to Gradle Wrapper
         run: chmod +x gradlew
 
-      - name: Verify Code Compilation & Build Cache
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          arguments: :app:compileDebugKotlin :app:compileDebugJavaWithJavac
+
+      - name: Verify Code Compilation
+        run: ./gradlew :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-daemon
 
       - name: Run Unit & Robolectric Tests
-        run: ./gradlew :app:testDebugUnitTest --info
+        run: ./gradlew :app:testDebugUnitTest --info --no-daemon
 
       - name: Upload JUnit Test Reports
         uses: actions/upload-artifact@v4

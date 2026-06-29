@@ -1,10 +1,12 @@
 package com.example.data.firebase
 
 import android.content.Context
+import android.os.Bundle
 import android.util.Log
 import com.example.data.AuditLog
 import com.example.data.AutomationWorkflow
 import com.google.firebase.FirebaseApp
+import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -16,6 +18,7 @@ import kotlinx.coroutines.tasks.await
 class FirebaseManager(private val context: Context) {
     private var auth: FirebaseAuth? = null
     private var firestore: FirebaseFirestore? = null
+    private var analytics: FirebaseAnalytics? = null
     
     private val _isFirebaseAvailable = MutableStateFlow(false)
     val isFirebaseAvailable: StateFlow<Boolean> = _isFirebaseAvailable
@@ -30,13 +33,14 @@ class FirebaseManager(private val context: Context) {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
                 auth = FirebaseAuth.getInstance()
                 firestore = FirebaseFirestore.getInstance()
+                analytics = FirebaseAnalytics.getInstance(context)
                 _isFirebaseAvailable.value = true
                 
                 auth?.addAuthStateListener { firebaseAuth ->
                     val user = firebaseAuth.currentUser
                     _currentUserFlow.value = user?.toUserSession()
                 }
-                Log.d("FirebaseManager", "Firebase successfully initialized and available.")
+                Log.d("FirebaseManager", "Firebase successfully initialized and available (with Analytics).")
             } else {
                 Log.w("FirebaseManager", "FirebaseApp is not initialized. Using Sandbox mode.")
                 _isFirebaseAvailable.value = false
@@ -44,6 +48,19 @@ class FirebaseManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e("FirebaseManager", "Failed to initialize Firebase: ${e.message}. Using Sandbox mode.")
             _isFirebaseAvailable.value = false
+        }
+    }
+
+    fun logEvent(name: String, params: Bundle? = null) {
+        if (_isFirebaseAvailable.value) {
+            try {
+                analytics?.logEvent(name, params)
+                Log.d("FirebaseManager", "Logged Analytics Event: $name, parameters: $params")
+            } catch (e: Exception) {
+                Log.e("FirebaseManager", "Error logging Analytics Event: ${e.message}")
+            }
+        } else {
+            Log.d("FirebaseManager", "Sandbox Mode Event Logged: $name, parameters: $params")
         }
     }
 

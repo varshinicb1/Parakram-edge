@@ -145,6 +145,13 @@ Parakram is engineered for public Play Store compliance, strictly adhering to fo
 
 ---
 
+### 5. Launcher App Shortcuts & Intuitive Onboarding
+To provide top-tier desktop orchestration synergy, Parakram registers home screen launcher shortcuts to jump straight into specialized telemetry modules:
+* **Direct Jumps**: Instantly open the Developer Dashboard, local Automation Engine, or Diagnostics Console directly from the app launcher icon.
+* **Onboarding Telemetry**: Intercepts shortcut intents programmatically, dismisses onboarding overlays automatically, and emits a `tab_selected` tracking event to Firebase Analytics.
+
+---
+
 ## 📈 Scalability, Analytics & Monetization Paths
 
 1. **Firebase Analytics & Play Console Logging**:

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="shortcut_dashboard"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_dashboard"
+        android:shortcutShortLabel="@string/shortcut_dashboard_short"
+        android:shortcutLongLabel="@string/shortcut_dashboard_long">
+        <intent
+            android:action="com.example.ACTION_SHORTCUT"
+            android:targetPackage="com.aistudio.deviceapi.vtxqza"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="tab" android:value="dashboard" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_automation"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_automation"
+        android:shortcutShortLabel="@string/shortcut_automation_short"
+        android:shortcutLongLabel="@string/shortcut_automation_long">
+        <intent
+            android:action="com.example.ACTION_SHORTCUT"
+            android:targetPackage="com.aistudio.deviceapi.vtxqza"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="tab" android:value="automation" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_console"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_console"
+        android:shortcutShortLabel="@string/shortcut_console_short"
+        android:shortcutLongLabel="@string/shortcut_console_long">
+        <intent
+            android:action="com.example.ACTION_SHORTCUT"
+            android:targetPackage="com.aistudio.deviceapi.vtxqza"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="tab" android:value="console" />
+        </intent>
+    </shortcut>
+</shortcuts>

@@ -58,6 +58,10 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     val firebaseManager = FirebaseManager(context)
     val serverManager = MobileServerManager(context)
 
+    fun logAnalyticsEvent(name: String, params: android.os.Bundle? = null) {
+        firebaseManager.logEvent(name, params)
+    }
+
     // NFC Status
     private val nfcAdapter: NfcAdapter? by lazy {
         try {
@@ -69,6 +73,18 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     
     val isNfcSupported: Boolean get() = nfcAdapter != null
     val isNfcEnabled: Boolean get() = nfcAdapter?.isEnabled == true
+
+    // App Shortcut Tab Request
+    private val _requestedTab = MutableStateFlow<String?>(null)
+    val requestedTab: StateFlow<String?> = _requestedTab.asStateFlow()
+
+    fun requestTab(tabName: String) {
+        _requestedTab.value = tabName
+    }
+
+    fun clearRequestedTab() {
+        _requestedTab.value = null
+    }
 
     // ADB & System Developer Options
     private val _adbTerminalOutput = MutableStateFlow("Developer Terminal ready.\nType a command or choose a quick-access preset below.\n")
