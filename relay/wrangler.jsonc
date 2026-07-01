@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "parakram-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "RELAY_ROOM", "class_name": "RelayRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }
+  ],
+  "vars": {
+    "RELAY_TOKEN": ""
+  }
+}

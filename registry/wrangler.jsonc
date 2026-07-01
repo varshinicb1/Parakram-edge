@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "parakram-registry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "parakram-registry",
+      "database_id": "parakram-registry"
+    }
+  ],
+  "vars": {
+    "REGISTRY_KEY": "",
+    "STRIPE_PRO_PRICE": "",
+    "STRIPE_ENTERPRISE_PRICE": ""
+  },
+  "routes": [
+    { "pattern": "registry.parakram.dev/*", "zone_id": "" }
+  ]
+}

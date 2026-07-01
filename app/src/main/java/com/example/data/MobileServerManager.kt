@@ -2,6 +2,9 @@ package com.example.data
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
 import io.ktor.http.*
 import io.ktor.http.content.*
@@ -1524,4 +1527,110 @@ class MobileServerManager(private val context: Context) {
         }
         return "127.0.0.1"
     }
+
+    // ── Relay (Cloudflare Durable Objects) ────────────────────
+
+    private var relayWebSocket: WebSocket? = null
+    private val okHttpClient = OkHttpClient.Builder()
+        .pingInterval(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    private val _isRelayConnected = MutableStateFlow(false)
+    val isRelayConnected: StateFlow<Boolean> = _isRelayConnected.asStateFlow()
+
+    private val _relayDeviceId = MutableStateFlow("")
+    val relayDeviceId: StateFlow<String> = _relayDeviceId.asStateFlow()
+
+    fun connectToRelay(relayUrl: String, relayToken: String) {
+        if (_isRelayConnected.value || serverJob == null) return
+
+        val deviceId = android.os.Build.MODEL.replace(" ", "-") + "_" + java.util.UUID.randomUUID().toString().take(8)
+        _relayDeviceId.value = deviceId
+
+        val wsUrl = "${relayUrl}/connect?deviceId=${deviceId}&role=phone&token=${relayToken}"
+            .replace("http://", "ws://")
+            .replace("https://", "wss://")
+
+        val request = Request.Builder().url(wsUrl).build()
+        relayWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(ws: WebSocket, response: Response) {
+                _isRelayConnected.value = true
+                log("Relay connected: $deviceId")
+            }
+
+            override fun onMessage(ws: WebSocket, text: String) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    handleRelayMessage(text)?.let { ws.send(it) }
+                }
+            }
+
+            override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                ws.close(code, reason)
+            }
+
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                _isRelayConnected.value = false
+                log("Relay disconnected: $reason")
+            }
+
+            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                _isRelayConnected.value = false
+                log("Relay error: ${t.message}")
+            }
+        })
+    }
+
+    fun disconnectFromRelay() {
+        relayWebSocket?.close(1000, "Phone shutting down")
+        relayWebSocket = null
+        _isRelayConnected.value = false
+        _relayDeviceId.value = ""
+    }
+
+    private suspend fun handleRelayMessage(json: String): String? {
+        return try {
+            val msg = Json.decodeFromString<RelayRequest>(json)
+            val url = msg.url
+            val method = msg.method.uppercase()
+            val body = msg.body ?: ""
+            val serverPort = prefs.getInt("server_port", 8080)
+
+            val reqBuilder = Request.Builder()
+                .url("http://127.0.0.1:$serverPort$url")
+                .header("X-Agent-Key", _apiKey.value)
+
+            val call = if (method == "GET") {
+                okHttpClient.newCall(reqBuilder.get().build())
+            } else {
+                val mediaType = "application/json".toMediaType()
+                okHttpClient.newCall(reqBuilder.post(body.toRequestBody(mediaType)).build())
+            }
+
+            val response = call.execute()
+            val responseBody = response.body?.string() ?: "{}"
+            Json.encodeToString(RelayResponse.serializer(), RelayResponse(
+                id = msg.id,
+                status = response.code,
+                body = responseBody,
+            ))
+        } catch (e: Exception) {
+            log("Relay message error: ${e.message}")
+            null
+        }
+    }
 }
+
+@kotlinx.serialization.Serializable
+data class RelayRequest(
+    val id: String,
+    val method: String,
+    val url: String,
+    val body: String? = null,
+)
+
+@kotlinx.serialization.Serializable
+data class RelayResponse(
+    val id: String,
+    val status: Int,
+    val body: String,
+)
