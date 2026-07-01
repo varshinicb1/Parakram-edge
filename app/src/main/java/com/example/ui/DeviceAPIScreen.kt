@@ -209,6 +209,9 @@ fun DeviceAPIScreen(
                         "console" -> ConsoleTab(
                             viewModel = viewModel
                         )
+                        "plugins" -> PluginMarketplaceTab(
+                            viewModel = viewModel
+                        )
                         "profile" -> ProfileTab(
                             viewModel = viewModel,
                             currentUser = currentUser,
@@ -270,6 +273,7 @@ fun DeviceAPIBottomNav(
                 Triple("server", "Server", Icons.Default.Dns),
                 Triple("adb", "ADB", Icons.Default.Terminal),
                 Triple("console", "Console", Icons.Default.Code),
+                Triple("plugins", "Marketplace", Icons.Default.Store),
                 Triple("profile", "Secure", Icons.Default.Lock)
             )
             
@@ -303,6 +307,282 @@ fun DeviceAPIBottomNav(
                         color = contentColor,
                         letterSpacing = 0.5.sp
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PluginMarketplaceTab(viewModel: DeviceAPIViewModel) {
+    val pluginViewModel: PluginMarketplaceViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+        factory = PluginMarketplaceViewModel.Factory(viewModel.serverManager)
+    )
+    pluginViewModel.loadPlugins()
+    pluginViewModel.loadInstalledPlugins()
+    
+    PluginMarketplaceScreen(
+        viewModel = pluginViewModel,
+        onBack = { /* handled by tab navigation */ }
+    )
+}
+
+class PluginMarketplaceViewModel.Factory(private val serverManager: MobileServerManager) : androidx.lifecycle.ViewModelProvider.Factory {
+    @Suppress("""@Suppress("UNCHECKED_CAST")
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        return PluginMarketplaceViewModel(serverManager) as T
+    }
+}
+
+class PluginMarketplaceViewModel.Factory(private val serverManager: MobileServerManager) : androidx.lifecycle.ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        return PluginMarketplaceViewModel(serverManager) as T
+    }
+}
+
+@Composable
+fun PluginMarketplaceScreen(
+    viewModel: PluginMarketplaceViewModel,
+    onBack: () -> Unit
+) {
+    val plugins by viewModel.plugins.observeAsState(initial = emptyList())
+    val installedPlugins by viewModel.installedPlugins.observeAsState(initial = emptyList())
+    val isLoading by viewModel.isLoading.observeAsState(initial = false)
+    val error by viewModel.error.observeAsState(initial = null)
+    val selectedCategory by viewModel.selectedCategory.observeAsState(initial = "all")
+    
+    val categories = listOf("all", "communication", "automation", "hardware", "productivity", "utility")
+    val categoryLabels = mapOf(
+        "all" to "All",
+        "communication" to "Communication",
+        "automation" to "Automation",
+        "hardware" to "Hardware",
+        "productivity" to "Productivity",
+        "utility" to "Utility"
+    )
+    
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Plugin Marketplace", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                Text("Extend your phone's capabilities", fontSize = 14.sp, color = Color.Gray)
+            }
+        }
+        
+        // Error banner
+        error?.let { msg ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .background(Color.Red.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.Red.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(msg, color = Color.Red, fontSize = 14.sp)
+                }
+            }
+        }
+        
+        // Category chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            categories.forEach { cat ->
+                val isSelected = selectedCategory == cat
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { viewModel.loadPlugins(cat) },
+                    label = { Text(categoryLabels[cat] ?: cat, fontSize = 12.sp) },
+                    colors = androidx.compose.material3.FilterChipDefaults.colors(
+                        selectedContainerColor = GoldMetallicBrush,
+                        containerColor = Color.White,
+                        selectedLabelColor = Color.Black,
+                        labelColor = Color.Gray
+                    ),
+                    modifier = Modifier.height(32.dp)
+                )
+            }
+        }
+        
+        // Loading / Empty / List
+        if (isLoading && plugins.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().height(200.dp), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator(color = GoldBase)
+            }
+        } else if (plugins.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().height(200.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Store, contentDescription = "", tint = Color.Gray, modifier = Modifier.size(48.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("No plugins found", fontSize = 16.sp, color = Color.Gray)
+                }
+            }
+        } else {
+            // Installed section
+            if (installedPlugins.isNotEmpty()) {
+                Text("Installed", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    installedPlugins.forEach { installed ->
+                        PluginCard(
+                            plugin = Plugin(
+                                id = 0, name = installed.name, displayName = installed.displayName,
+                                description = "", author = "", category = "",
+                                iconUrl = "", tier = "free", homepage = "",
+                                versions = emptyList()
+                            ),
+                            isInstalled = true,
+                            installedVersion = installed.version,
+                            isEnabled = installed.enabled,
+                            onInstall = { },
+                            onToggle = { viewModel.togglePlugin(installed, !installed.enabled) }
+                        )
+                    }
+                }
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
+            }
+            
+            // Available plugins
+            Text("Available", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                plugins.forEach { plugin ->
+                    val isInstalled = installedPlugins.any { it.name == plugin.name }
+                    val installedVersion = installedPlugins.firstOrNull { it.name == plugin.name }?.version
+                    val isEnabled = installedPlugins.firstOrNull { it.name == plugin.name }?.enabled ?: false
+                    
+                    PluginCard(
+                        plugin = plugin,
+                        isInstalled = isInstalled,
+                        installedVersion = installedVersion,
+                        isEnabled = isEnabled,
+                        onInstall = { viewModel.installPlugin(plugin) },
+                        onToggle = { }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PluginCard(
+    plugin: Plugin,
+    isInstalled: Boolean,
+    installedVersion: String? = null,
+    isEnabled: Boolean = false,
+    onInstall: () -> Unit,
+    onToggle: () -> Unit
+) {
+    val tierColor = when (plugin.tier) {
+        "pro" -> Color(0xFF9C27B0) // Purple
+        "enterprise" -> Color(0xFFFF6F00) // Orange
+        else -> Color(0xFF4CAF50) // Green
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White,
+            contentColor = Color.Black
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Icon
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(tierColor.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                    ) {
+                        Icon(
+                            painter = androidx.compose.ui.res.painterResource(id = androidx.compose.ui.res.stringResource(id = "app_name")), // fallback
+                            contentDescription = "",
+                            tint = tierColor,
+                            modifier = Modifier.align(Alignment.Center).size(24.dp)
+                        )
+                    }
+                    
+                    // Info
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(plugin.displayName, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(plugin.tier.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = tierColor)
+                        }
+                        Text(plugin.description, fontSize = 12.sp, color = Color.Gray, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("by ${plugin.author}", fontSize = 10.sp, color = Color.Gray)
+                            Text(plugin.category.uppercase(), fontSize = 10.sp, color = tierColor, fontWeight = FontWeight.Medium)
+                        }
+                        installedVersion?.let {
+                            Text("Installed v$it", fontSize = 10.sp, color = Color(0xFF4CAF50), fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+                
+                // Action
+                Column(horizontalAlignment = Alignment.End) {
+                    if (isInstalled) {
+                        androidx.compose.material3.Switch(
+                            checked = isEnabled,
+                            onCheckedChange = { onToggle() },
+                            modifier = Modifier.padding(top = 4.dp),
+                            colors = androidx.compose.material3.SwitchDefaults.colors(
+                                checkedThumbColor = tierColor,
+                                checkedTrackColor = tierColor.copy(alpha = 0.3f)
+                            )
+                        )
+                        Text(if (isEnabled) "Enabled" else "Disabled", fontSize = 10.sp, color = if (isEnabled) tierColor else Color.Gray)
+                    } else {
+                        Button(
+                            onClick = onInstall,
+                            modifier = Modifier.padding(top = 8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = GoldBase,
+                                contentColor = Color.Black
+                            )
+                        ) {
+                            Text("Install", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }

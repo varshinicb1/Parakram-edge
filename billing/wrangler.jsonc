@@ -1,25 +1,28 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "parakram-registry",
+  "name": "parakram-billing",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-07",
   "compatibility_flags": ["nodejs_compat"],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "parakram-registry",
-      "database_id": "parakram-registry"
+      "database_name": "parakram-billing",
+      "database_id": "parakram-billing"
     }
   ],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": [] }
+  ],
   "vars": {
-    "REGISTRY_KEY": "",
     "RAZORPAY_KEY_ID": "",
     "RAZORPAY_KEY_SECRET": "",
     "RAZORPAY_WEBHOOK_SECRET": "",
     "RAZORPAY_PRO_PLAN_ID": "",
-    "RAZORPAY_ENTERPRISE_PLAN_ID": ""
+    "RAZORPAY_ENTERPRISE_PLAN_ID": "",
+    "FRONTEND_URL": "https://parakram.dev"
   },
   "routes": [
-    { "pattern": "registry.parakram.dev/*", "zone_id": "" }
+    { "pattern": "billing.parakram.dev/*", "zone_id": "" }
   ]
 }

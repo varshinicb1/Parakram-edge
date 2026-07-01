@@ -183,7 +183,161 @@ To enable users to instantly jump to specific server dashboards directly from th
 
 ---
 
-## 6. Development Guidelines for Future Agents
+## 6. AgentOS Bridge — Relay Infrastructure, SDKs & Plugin Marketplace
+
+New in v2.0.0: Parakram extends beyond LAN with a Cloudflare-backed relay infrastructure, official SDKs for AI agents, and a plugin marketplace.
+
+### A. Cloudflare Workers Relay (Cross-Network Connectivity)
+
+**Architecture**: Phone (mobile data) ↔ Cloudflare Durable Object ↔ Agent (desktop LAN)
+
+- **relay/src/index.ts**: Worker entry — accepts WebSocket upgrades at `/connect?deviceId=xxx&role=phone|agent&token=yyy`, authenticates via `RELAY_TOKEN`, routes to Durable Object by deviceId.
+- **relay/src/relay-room.ts**: Durable Object (`RelayRoom`) — maintains two WebSocket slots (phone + agent), relays messages bidirectionally, handles disconnects via Hibernation API for cost efficiency.
+- **relay/wrangler.jsonc**: Defines `RELAY_ROOM` binding, migration `v1`, env var `RELAY_TOKEN`.
+
+**Protocol**:
+1. Phone calls `MobileServerManager.connectToRelay(relayUrl, relayToken)` → opens WebSocket as `role=phone`.
+2. Agent SDK calls `connectRelay(deviceId, apiKey)` → opens WebSocket as `role=agent`.
+3. Agent sends JSON: `{ "id": "uuid", "method": "GET", "url": "/api/status", "body": null }`
+4. Phone receives, executes local HTTP call to `127.0.0.1:8080`, returns response via relay.
+5. Response: `{ "id": "uuid", "status": 200, "body": "{\"status\":\"online\"}" }`
+
+**Tier Routing**:
+- **Free**: LAN-only (mDNS discovery, direct connection)
+- **Pro ($5/mo via Razorpay)**: Internet relay via Cloudflare Workers
+- **Enterprise ($50/seat/mo)**: Fleet management, SSO, audit logs, priority relay capacity
+
+### B. Python Agent SDK (`sdk/python/parakram/`)
+
+```bash
+pip install parakram-bridge
+```
+
+```python
+from parakram import Parakram
+
+# Local discovery (LAN)
+devices = Parakram().discover()
+agent = Parakram().connect(devices[0])
+
+# Cloud relay (internet)
+agent = Parakram(relay_url="wss://relay.parakram.dev", relay_token="xxx").connect_relay("device-id", "sk_agent_...")
+
+# Capabilities
+caps = agent.capabilities
+sensors = agent.sensors
+
+# Camera stream (HMAC-signed URL)
+stream_url = agent.camera_auth()
+
+# UTAP database
+agent.utap_create("logs", {"key": "event", "value": "login"})
+rows = agent.utap_read("logs", where="key='event'")
+```
+
+**Files**: `client.py` (HTTP + mDNS discovery), `models.py` (dataclasses), `__init__.py` (exports).
+
+### C. TypeScript Agent SDK (`sdk/typescript/`)
+
+```bash
+npm install parakram-bridge
+```
+
+```typescript
+import { Parakram } from "parakram-bridge";
+
+const agent = new Parakram({ relayUrl: "wss://relay.parakram.dev", relayToken: "xxx" })
+  .connectRelay("device-id", "sk_agent_...");
+
+const caps = await agent.capabilities();
+const streamUrl = await agent.cameraAuth();
+const rows = await agent.utapRead("logs", "key='event'");
+```
+
+### D. Plugin Registry API (`registry/`)
+
+Cloudflare Worker + D1 database for plugin marketplace.
+
+**Endpoints**:
+- `GET /api/plugins?category=utility` — list plugins
+- `POST /api/plugins` — create plugin (requires `X-Registry-Key`)
+- `GET /api/plugins/:name` — get plugin details
+- `POST /api/plugins/:name/versions` — publish version
+- `POST /api/install` — record installation: `{ plugin_name, device_id, version }`
+- `GET /api/installed/:deviceId` — list installed plugins
+
+**Schema** (`registry/schema.sql`):
+- `plugins(id, name, display_name, description, author, category, icon_url, tier, homepage)`
+- `versions(plugin_id, version, code_url, min_sdk_version, changelog, checksum)`
+- `installations(plugin_id, device_id, version, enabled)`
+
+**Tier Enforcement**: `tier` column (`free|pro|enterprise`) controls availability. Enterprise tier plugins require valid subscription (checked via Razorpay webhook).
+
+### E. MobileServerManager Relay Integration
+
+```kotlin
+// In MobileServerManager
+fun connectToRelay(relayUrl: String, relayToken: String) { ... }
+fun disconnectFromRelay() { ... }
+val isRelayConnected: StateFlow<Boolean>
+val relayDeviceId: StateFlow<String>
+
+// Usage in DeviceAPIViewModel:
+viewModel.connectToRelay("wss://relay.parakram.dev", "RELAY_TOKEN")
+```
+
+Uses OkHttp WebSocket (`okhttp3.WebSocketListener`) with ping interval 30s. On message receipt, executes local HTTP call to Ktor server and returns response via relay.
+
+---
+
+## 7. Razorpay Billing Integration
+
+Replaces Stripe for Indian market compliance and UPI support.
+
+### A. Billing Worker (`billing/`)
+
+**Endpoints**:
+- `POST /billing/create-subscription` — creates Razorpay subscription, returns `subscription_id`
+- `POST /billing/webhook` — Razorpay webhook handler (verifies signature)
+- `GET /billing/tiers` — returns tier config (Free/Pro/Enterprise pricing)
+
+**Razorpay Plans**:
+- Free: ₹0 (LAN-only)
+- Pro: ₹499/mo (Internet relay, 10 devices)
+- Enterprise: ₹4999/seat/mo (Fleet, SSO, audit, priority)
+
+**Webhook Events**:
+- `subscription.charged` — activate Pro/Enterprise tier
+- `subscription.cancelled` — downgrade to Free
+- `payment.failed` — retry logic, notify user
+
+### B. Tier Enforcement in Registry
+
+Registry checks device tier via Razorpay customer ID stored in D1. Enterprise plugins only installable if `device.tier = 'enterprise'`.
+
+---
+
+## 8. Enterprise Features
+
+### A. SSO (Google OAuth)
+- Registry `/auth/sso/google` initiates OAuth flow
+- JWT issued with `org_id`, `role` claims
+- Fleet admin can invite members via email
+
+### B. Audit Logging
+- `POST /api/audit` — records `{ actor, action, resource, timestamp, metadata }`
+- Immutable append-only table in D1
+- Export via `GET /api/audit?from=...&to=...`
+
+### C. Fleet Management
+- `POST /api/fleet/devices` — register device with fleet token
+- `GET /api/fleet/devices` — list all devices, status, tier
+- `POST /api/fleet/policy` — push config (allowed plugins, network rules)
+
+---
+
+## 9. Development Guidelines for Future Agents
+
 - **M3 Touch Targets**: Every button must be exactly `48.dp` in height (or use `Modifier.height(48.dp)`) to provide top-tier touch precision on hardware screens.
 - **State Management**: Keep ViewModels free of raw database connections; always route through Ktor or local repositories.
 - **Compile and Build**: Verify all changes by running `compile_applet` to confirm compilation is green.
