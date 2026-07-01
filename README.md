@@ -4,6 +4,13 @@
   <img src="github_banner.jpg" alt="Parakram Banner" width="100%">
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Kotlin-2.2.10-purple?logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/API-24%2B-green" alt="minSdk">
+  <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
+  <img src="https://img.shields.io/badge/Compose-BOM_2024.09-teal" alt="Compose">
+</p>
+
 ---
 
 ## 🚀 The Billion-Dollar Pocket Edge Server Architecture
