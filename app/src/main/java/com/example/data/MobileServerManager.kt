@@ -2,7 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import android.util.Log
+import timber.log.Timber
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.application.*
@@ -11,7 +11,8 @@ import io.ktor.server.cio.*
 import io.ktor.server.response.*
 import io.ktor.server.request.*
 import io.ktor.server.routing.*
-import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.cors.routing.CORS
+import io.ktor.server.plugins.cors.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.CoroutineScope
@@ -23,8 +24,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.seconds
 import java.io.File
 import java.net.NetworkInterface
+import java.security.MessageDigest
 
 @Serializable
 data class QueryRequest(val query: String)
@@ -365,7 +368,7 @@ class MobileServerManager(private val context: Context) {
         } catch (e: Exception) {
             // fallback
         }
-        return 8.5 + (System.currentTimeMillis() % 10).toDouble() * 0.7
+        return -1.0 // Unable to determine CPU load
     }
 
     fun getNetworkSpecs(ctx: Context): NetworkSpecsResponse {
@@ -465,7 +468,7 @@ class MobileServerManager(private val context: Context) {
             socket.close()
             latencyMs = System.currentTimeMillis() - startTime
         } catch (e: Exception) {
-            latencyMs = if (connectionType == "None") 0 else (45 + (System.currentTimeMillis() % 40))
+            latencyMs = -1L
         }
 
         return NetworkSpecsResponse(
@@ -487,12 +490,7 @@ class MobileServerManager(private val context: Context) {
         
         if (id == "tunnel") {
             if (enabled) {
-                log("Starting reverse tunnel proxy service...")
-                CoroutineScope(Dispatchers.IO).launch {
-                    kotlinx.coroutines.delay(1000)
-                    log("Connected to global edge proxy.")
-                    log("Public Tunnel: https://agent-${java.util.UUID.randomUUID().toString().substring(0, 8)}.deviceapi.network")
-                }
+                log("Tunnel service enabled. Configure your Cloudflare Tunnel or ngrok externally to expose this server.")
             } else {
                 log("Reverse tunnel proxy disconnected.")
             }
@@ -637,7 +635,7 @@ class MobileServerManager(private val context: Context) {
                 return temp / 10.0
             }
         } catch (e: Exception) {}
-        return 34.5 // fallback ambient internal temperature
+        return -1.0
     }
 
     fun getThermalStatus(): ThermalStatusResponse {
@@ -734,9 +732,13 @@ class MobileServerManager(private val context: Context) {
             try {
                 server = embeddedServer(CIO, port = port) {
                     install(CORS) {
-                        anyHost()
+                        allowHost("localhost", schemes = listOf("http", "https"))
+                        allowHost("127.0.0.1", schemes = listOf("http", "https"))
+                        allowHost(getLocalIpAddress(), schemes = listOf("http"))
                         allowHeader(HttpHeaders.ContentType)
                         allowHeader("X-Agent-Key")
+                        allowHeader(HttpHeaders.Authorization)
+                        maxAgeDuration = 600.seconds
                     }
                     install(ContentNegotiation) {
                         json(Json { prettyPrint = true; isLenient = true; ignoreUnknownKeys = true })
@@ -765,11 +767,18 @@ class MobileServerManager(private val context: Context) {
 
                         if (path.startsWith("/api/") && !path.startsWith("/api/auth/pair/")) {
                             val clientKey = call.request.header("X-Agent-Key")
-                            if (clientKey != _apiKey.value) {
+                            if (clientKey == null || !MessageDigest.isEqual(clientKey.toByteArray(), _apiKey.value.toByteArray())) {
                                 call.respondText("Unauthorized: Invalid X-Agent-Key", status = HttpStatusCode.Unauthorized)
                                 finish()
                                 return@intercept
                             }
+                        }
+
+                        val contentLength = call.request.contentLength()
+                        if (contentLength != null && contentLength > 5_242_880) {
+                            call.respondText("Request entity too large", status = HttpStatusCode(413, "Request Entity Too Large"))
+                            finish()
+                            return@intercept
                         }
                     }
                     
@@ -1220,13 +1229,12 @@ class MobileServerManager(private val context: Context) {
                             if (_services.value.find { it.id == "db" }?.isEnabled == true) {
                                 try {
                                     val req = call.receive<UtapSchemaRequest>()
-                                    val colDefs = req.columns.joinToString(", ")
-                                    val sql = "CREATE TABLE IF NOT EXISTS ${req.table} ($colDefs)"
-                                    log("UTAP Schema: $sql")
+                                    val safeTable = sanitizeIdentifier(req.table)
+                                    val colDefs = req.columns.joinToString(", ") { sanitizeIdentifier(it.replace(Regex("\\s+.*"), "")) + it.substring(it.replace(Regex("\\s+.*"), "").length).take(200) }
+                                    val sql = "CREATE TABLE IF NOT EXISTS [$safeTable] ($colDefs)"
                                     db.execSQL(sql)
-                                    call.respond(mapOf("success" to true, "message" to "Table '${req.table}' created or verified successfully."))
+                                    call.respond(mapOf("success" to true, "message" to "Table '$safeTable' created."))
                                 } catch (e: Exception) {
-                                    log("POST /api/db/utap/schema - Error: ${e.message}")
                                     call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "error" to e.message))
                                 }
                             } else {
@@ -1238,21 +1246,17 @@ class MobileServerManager(private val context: Context) {
                             if (_services.value.find { it.id == "db" }?.isEnabled == true) {
                                 try {
                                     val req = call.receive<UtapCreateRequest>()
-                                    val cols = req.data.keys.joinToString(", ")
-                                    val placeholders = req.data.keys.joinToString(", ") { "?" }
-                                    val sql = "INSERT INTO ${req.table} ($cols) VALUES ($placeholders)"
-                                    log("UTAP Create: $sql with ${req.data.values}")
-                                    
+                                    val safeTable = sanitizeIdentifier(req.table)
+                                    val safeCols = req.data.keys.map { sanitizeIdentifier(it) }
+                                    val cols = safeCols.joinToString(", ")
+                                    val placeholders = safeCols.joinToString(", ") { "?" }
+                                    val sql = "INSERT INTO [$safeTable] ($cols) VALUES ($placeholders)"
                                     val stmt = db.compileStatement(sql)
                                     var idx = 1
-                                    req.data.values.forEach { v ->
-                                        stmt.bindString(idx, v)
-                                        idx++
-                                    }
+                                    req.data.values.forEach { v -> stmt.bindString(idx, v); idx++ }
                                     val rowId = stmt.executeInsert()
-                                    call.respond(mapOf("success" to true, "rowId" to rowId, "message" to "Row inserted successfully."))
+                                    call.respond(mapOf("success" to true, "rowId" to rowId))
                                 } catch (e: Exception) {
-                                    log("POST /api/db/utap/create - Error: ${e.message}")
                                     call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "error" to e.message))
                                 }
                             } else {
@@ -1264,18 +1268,21 @@ class MobileServerManager(private val context: Context) {
                             if (_services.value.find { it.id == "db" }?.isEnabled == true) {
                                 try {
                                     val req = call.receive<UtapReadRequest>()
-                                    var sql = "SELECT * FROM ${req.table}"
+                                    val safeTable = sanitizeIdentifier(req.table)
+                                    val sql = StringBuilder("SELECT * FROM [$safeTable]")
                                     if (!req.where.isNullOrEmpty()) {
-                                        sql += " WHERE ${req.where}"
+                                        validateWhereClause(req.where)
+                                        sql.append(" WHERE ${req.where}")
                                     }
                                     if (!req.orderBy.isNullOrEmpty()) {
-                                        sql += " ORDER BY ${req.orderBy}"
+                                        val safeOrder = req.orderBy.replace(Regex("[^a-zA-Z0-9_\\s,.]"), "")
+                                        sql.append(" ORDER BY $safeOrder")
                                     }
                                     if (req.limit != null) {
-                                        sql += " LIMIT ${req.limit}"
+                                        val safeLimit = req.limit.coerceIn(1, 1000)
+                                        sql.append(" LIMIT $safeLimit")
                                     }
-                                    log("UTAP Read: $sql")
-                                    val cursor = db.rawQuery(sql, null)
+                                    val cursor = db.rawQuery(sql.toString(), null)
                                     val results = mutableListOf<Map<String, String>>()
                                     if (cursor.moveToFirst()) {
                                         do {
@@ -1289,7 +1296,6 @@ class MobileServerManager(private val context: Context) {
                                     cursor.close()
                                     call.respond(mapOf("success" to true, "data" to results))
                                 } catch (e: Exception) {
-                                    log("POST /api/db/utap/read - Error: ${e.message}")
                                     call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "error" to e.message))
                                 }
                             } else {
@@ -1301,20 +1307,17 @@ class MobileServerManager(private val context: Context) {
                             if (_services.value.find { it.id == "db" }?.isEnabled == true) {
                                 try {
                                     val req = call.receive<UtapUpdateRequest>()
-                                    val setClauses = req.data.keys.joinToString(", ") { "$it = ?" }
-                                    val sql = "UPDATE ${req.table} SET $setClauses WHERE ${req.where}"
-                                    log("UTAP Update: $sql")
-                                    
+                                    val safeTable = sanitizeIdentifier(req.table)
+                                    val safeCols = req.data.keys.map { sanitizeIdentifier(it) }
+                                    validateWhereClause(req.where)
+                                    val setClauses = safeCols.joinToString(", ") { "$it = ?" }
+                                    val sql = "UPDATE [$safeTable] SET $setClauses WHERE ${req.where}"
                                     val stmt = db.compileStatement(sql)
                                     var idx = 1
-                                    req.data.values.forEach { v ->
-                                        stmt.bindString(idx, v)
-                                        idx++
-                                    }
+                                    req.data.values.forEach { v -> stmt.bindString(idx, v); idx++ }
                                     val rowsAffected = stmt.executeUpdateDelete()
-                                    call.respond(mapOf("success" to true, "rowsAffected" to rowsAffected, "message" to "Update completed successfully."))
+                                    call.respond(mapOf("success" to true, "rowsAffected" to rowsAffected))
                                 } catch (e: Exception) {
-                                    log("POST /api/db/utap/update - Error: ${e.message}")
                                     call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "error" to e.message))
                                 }
                             } else {
@@ -1326,12 +1329,12 @@ class MobileServerManager(private val context: Context) {
                             if (_services.value.find { it.id == "db" }?.isEnabled == true) {
                                 try {
                                     val req = call.receive<UtapDeleteRequest>()
-                                    val sql = "DELETE FROM ${req.table} WHERE ${req.where}"
-                                    log("UTAP Delete: $sql")
+                                    val safeTable = sanitizeIdentifier(req.table)
+                                    validateWhereClause(req.where)
+                                    val sql = "DELETE FROM [$safeTable] WHERE ${req.where}"
                                     db.execSQL(sql)
-                                    call.respond(mapOf("success" to true, "message" to "Deletion completed successfully."))
+                                    call.respond(mapOf("success" to true, "message" to "Deletion completed."))
                                 } catch (e: Exception) {
-                                    log("POST /api/db/utap/delete - Error: ${e.message}")
                                     call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "error" to e.message))
                                 }
                             } else {
@@ -1384,11 +1387,34 @@ class MobileServerManager(private val context: Context) {
             // General exception safety
         }
 
-        val lat = bestLocation?.latitude ?: 37.7749 // Default to SF for fallback/robustness
-        val lon = bestLocation?.longitude ?: -122.4194
-        val acc = bestLocation?.accuracy ?: 100.0f
-        val ts = bestLocation?.time ?: System.currentTimeMillis()
-        val prov = if (bestLocation != null) providerUsed else "mock/fallback"
+        if (bestLocation == null) {
+            return LocationResponse(
+                success = false,
+                latitude = 0.0,
+                longitude = 0.0,
+                coarseLatitude = 0.0,
+                coarseLongitude = 0.0,
+                accuracyMeters = 0f,
+                provider = "unavailable",
+                timestamp = System.currentTimeMillis(),
+                geofences = _geofences.map { g ->
+                    GeofenceStatus(
+                        id = g.id,
+                        label = g.label,
+                        latitude = g.latitude,
+                        longitude = g.longitude,
+                        radiusMeters = g.radiusMeters,
+                        isInside = false,
+                        distanceMeters = -1.0
+                    )
+                }
+            )
+        }
+        val lat = bestLocation.latitude
+        val lon = bestLocation.longitude
+        val acc = bestLocation.accuracy
+        val ts = bestLocation.time
+        val prov = providerUsed
 
         // Coarse rounding: 3 decimal places is ~110m, preserving privacy
         val coarseLat = Math.round(lat * 1000.0) / 1000.0
@@ -1436,6 +1462,20 @@ class MobileServerManager(private val context: Context) {
         return r * c
     }
 
+    private fun sanitizeIdentifier(name: String, maxLen: Int = 64): String {
+        val sanitized = name.replace(Regex("[^a-zA-Z0-9_]"), "").take(maxLen)
+        if (sanitized.length < 1) throw SecurityException("Invalid identifier: must be alphanumeric")
+        return sanitized
+    }
+
+    private fun validateWhereClause(where: String) {
+        val blocklist = listOf(";", "--", "/*", "*/", "xp_cmdshell", "DROP ", "ALTER ", "INSERT ", "DELETE ", "CREATE ", "UPDATE ", "ATTACH ", "DETACH ", "REINDEX ", "REPLACE ")
+        val upper = where.uppercase()
+        for (pattern in blocklist) {
+            if (upper.contains(pattern)) throw SecurityException("SQL injection blocked: forbidden keyword '$pattern'")
+        }
+    }
+
     fun addGeofence(geofence: GeofenceDefinition) {
         _geofences.removeIf { it.id == geofence.id }
         _geofences.add(geofence)
@@ -1463,7 +1503,7 @@ class MobileServerManager(private val context: Context) {
         currentList.add("[${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}] $message")
         if (currentList.size > 100) currentList.removeAt(0)
         _serverLogs.value = currentList
-        Log.d("MobileServer", message)
+        Timber.d("MobileServer", message)
     }
 
     fun getLocalIpAddress(): String {

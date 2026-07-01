@@ -8,6 +8,8 @@ plugins {
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  alias(libs.plugins.firebase.crashlytics)
+  alias(libs.plugins.hilt.android)
 }
 
 android {
@@ -103,7 +105,9 @@ dependencies {
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
+  implementation(libs.androidx.biometric)
   implementation(libs.androidx.core.ktx)
+  implementation(libs.timber)
   implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -118,6 +122,9 @@ dependencies {
   implementation(libs.firebase.auth)
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.analytics)
+  implementation(libs.firebase.crashlytics)
+  implementation(libs.hilt.android)
+  "ksp"(libs.hilt.compiler.ksp)
   implementation(libs.play.services.auth)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)

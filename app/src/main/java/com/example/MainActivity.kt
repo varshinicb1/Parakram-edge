@@ -3,6 +3,7 @@ package com.example
 import android.content.Intent
 import android.net.Uri
 import android.nfc.NdefMessage
+import timber.log.Timber
 import android.nfc.NfcAdapter
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -14,12 +15,19 @@ import androidx.compose.ui.Modifier
 import com.example.ui.DeviceAPIScreen
 import com.example.ui.DeviceAPIViewModel
 import com.example.ui.theme.MyApplicationTheme
+import com.google.firebase.crashlytics.FirebaseCrashlytics
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
   private val viewModel: DeviceAPIViewModel by viewModels()
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    if (BuildConfig.DEBUG) {
+      Timber.plant(timber.log.Timber.DebugTree())
+    }
+    Timber.plant(CrashlyticsTree())
     com.example.ui.theme.ThemeManager.init(applicationContext)
     enableEdgeToEdge()
     handleIntent(intent)
@@ -29,6 +37,14 @@ class MainActivity : ComponentActivity() {
           viewModel = viewModel,
           modifier = Modifier.fillMaxSize()
         )
+      }
+    }
+  }
+
+  private class CrashlyticsTree : Timber.Tree() {
+    override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+      if (t != null) {
+        FirebaseCrashlytics.getInstance().recordException(t)
       }
     }
   }

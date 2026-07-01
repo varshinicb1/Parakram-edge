@@ -15,7 +15,7 @@ import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Bundle
 import android.os.Vibrator
-import android.util.Log
+import timber.log.Timber
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AuditLog
@@ -26,9 +26,9 @@ import com.example.data.ConnectionStatus
 import com.example.data.Plugin
 import com.example.data.PasskeyDevice
 import com.example.data.WolDevice
-import com.example.data.firebase.FirebaseManager
 import com.example.data.firebase.UserSession
 import com.example.data.firebase.AdminProfile
+import com.example.data.firebase.FirebaseManager
 import android.nfc.NfcAdapter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,12 +51,17 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 
 import com.example.data.MobileServerManager
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 
-class DeviceAPIViewModel(application: Application) : AndroidViewModel(application), SensorEventListener, LocationListener {
+@HiltViewModel
+class DeviceAPIViewModel @Inject constructor(
+    application: Application,
+    val firebaseManager: FirebaseManager,
+    val serverManager: MobileServerManager
+) : AndroidViewModel(application), SensorEventListener, LocationListener {
 
     private val context = application.applicationContext
-    val firebaseManager = FirebaseManager(context)
-    val serverManager = MobileServerManager(context)
 
     fun logAnalyticsEvent(name: String, params: android.os.Bundle? = null) {
         firebaseManager.logEvent(name, params)
@@ -251,13 +256,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     private val _secondaryScreenMode = MutableStateFlow("Secondary Display")
     val secondaryScreenMode: StateFlow<String> = _secondaryScreenMode.asStateFlow()
 
-    private val _secondaryScreenStats = MutableStateFlow(mapOf(
-        "resolution" to "1920x1080",
-        "fps" to "60",
-        "latency" to "1.8ms",
-        "protocol" to "UltraPipe Direct",
-        "compression" to "H.265 (High-Tier)"
-    ))
+    private val _secondaryScreenStats = MutableStateFlow(emptyMap<String, String>())
     val secondaryScreenStats: StateFlow<Map<String, String>> = _secondaryScreenStats.asStateFlow()
 
     // Connection State
@@ -294,37 +293,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         _automationLogs.value = emptyList()
     }
 
-    // QR Code Mappings State
-    private val _qrCodeMappings = MutableStateFlow<List<com.example.data.QRCodeMapping>>(listOf(
-        com.example.data.QRCodeMapping(
-            id = "qrm_1",
-            pattern = "SECURE_DOOR_ACCESS",
-            action = "Trigger Phone Haptics",
-            label = "Haptic Door Entry Confirmation",
-            isActive = true
-        ),
-        com.example.data.QRCodeMapping(
-            id = "qrm_2",
-            pattern = "LOG_PAYMENT_CONFIRMED",
-            action = "Send Automated SMS",
-            label = "Audit Logging Callback",
-            isActive = true
-        ),
-        com.example.data.QRCodeMapping(
-            id = "qrm_3",
-            pattern = "CAMERA_PHOTO_CAPTURE",
-            action = "Capture Photo",
-            label = "Security Guard Camera Snap",
-            isActive = true
-        ),
-        com.example.data.QRCodeMapping(
-            id = "qrm_4",
-            pattern = "SERVER_REBOOT_TRIGGER",
-            action = "Execute Shell Command",
-            label = "Reboot Local Web Node",
-            isActive = false
-        )
-    ))
+    private val _qrCodeMappings = MutableStateFlow<List<com.example.data.QRCodeMapping>>(emptyList())
     val qrCodeMappings: StateFlow<List<com.example.data.QRCodeMapping>> = _qrCodeMappings.asStateFlow()
 
     fun addQRCodeMapping(pattern: String, action: String, label: String) {
@@ -380,28 +349,23 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     private val _batteryStatus = MutableStateFlow(Pair(100, "Discharging"))
     val batteryStatus: StateFlow<Pair<Int, String>> = _batteryStatus.asStateFlow()
 
-    private val _gpsCoords = MutableStateFlow(Pair(37.7749, -122.4194)) // Default SF
+    private val _gpsCoords = MutableStateFlow(Pair(0.0, 0.0))
     val gpsCoords: StateFlow<Pair<Double, Double>> = _gpsCoords.asStateFlow()
+    val hasGpsFix: Boolean get() = _gpsCoords.value.first != 0.0 || _gpsCoords.value.second != 0.0
 
     // Selected capability for detail view
     private val _activeCapabilityId = MutableStateFlow<String?>(null)
     val activeCapabilityId: StateFlow<String?> = _activeCapabilityId.asStateFlow()
 
-    // OAuth 2.0 State Engine
-    private val _oauthStage = MutableStateFlow("idle") // "idle", "authorization_request", "code_received", "token_exchange", "token_verified", "session_active"
+    // OAuth 2.0 State Engine (Google Sign-In)
+    private val _oauthStage = MutableStateFlow("idle")
     val oauthStage: StateFlow<String> = _oauthStage.asStateFlow()
+
+    private val _pendingGoogleSignIn = MutableStateFlow(false)
+    val pendingGoogleSignIn: StateFlow<Boolean> = _pendingGoogleSignIn.asStateFlow()
 
     private val _oauthClientId = MutableStateFlow("97657eec-007b-487d-b422-15e49086681c")
     val oauthClientId: StateFlow<String> = _oauthClientId.asStateFlow()
-
-    private val _oauthRedirectUri = MutableStateFlow("https://com.example/oauth2/callback")
-    val oauthRedirectUri: StateFlow<String> = _oauthRedirectUri.asStateFlow()
-
-    private val _oauthCodeChallenge = MutableStateFlow("E9Melhoa2OwvFrGMTJguCH5y_126_Vl15B_G_S1sc_c")
-    val oauthCodeChallenge: StateFlow<String> = _oauthCodeChallenge.asStateFlow()
-
-    private val _oauthCodeVerifier = MutableStateFlow("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
-    val oauthCodeVerifier: StateFlow<String> = _oauthCodeVerifier.asStateFlow()
 
     private val _oauthAccessToken = MutableStateFlow("")
     val oauthAccessToken: StateFlow<String> = _oauthAccessToken.asStateFlow()
@@ -440,7 +404,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         loadInitialCapabilities()
         loadPlugins()
         registerBatteryReceiver()
-        startTrafficSimulator()
+        startTrafficMonitor()
         loadBluetoothAdapterData()
         startNsdDiscovery()
 
@@ -460,12 +424,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         // Initial registered Windows laptop passkey
         _passkeys.value = emptyList()
 
-        // Populate default Wake-on-LAN developer/media server devices to pass unit tests and polish UI
-        _wolDevices.value = listOf(
-            WolDevice(name = "Windows Desktop (Workstation)", mac = "1A:2B:3C:4D:5E:6F", broadcastIp = "192.168.1.255", port = 9),
-            WolDevice(name = "Ubuntu Media Server", mac = "AA:BB:CC:DD:EE:FF", broadcastIp = "192.168.1.255", port = 9),
-            WolDevice(name = "Home NAS Storage", mac = "00:11:22:33:44:55", broadcastIp = "192.168.1.255", port = 7)
-        )
+        _wolDevices.value = emptyList()
 
         serverManager.setOnSecurePairSuccessCallback { clientName, clientIp ->
             initiatePairing(clientName, clientIp)
@@ -491,103 +450,40 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun loadInitialCapabilities() {
-        _capabilities.value = listOf(
-            Capability("camera", "Camera Stream", "Secure, low-latency 1080p MJPEG / WebRTC live video feed.", "Videocam", "Exposed", "Media"),
-            Capability("microphone", "Audio Stream", "Dual-channel Opus compressed microphone feed for desktop capturing.", "Mic", "Exposed", "Media"),
-            Capability("gps", "GPS Coordinates", "High-accuracy geolocation provider with geofencing capability.", "LocationOn", "Exposed", "Sensors"),
-            Capability("biometrics", "Biometric Shield", "Secure biometric prompt authentication (Fingerprint / Face ID).", "Fingerprint", "Exposed", "Security"),
-            Capability("clipboard", "Clipboard Sync", "Real-time sync of system clipboard contents across local network.", "Assignment", "Exposed", "Utility"),
-            Capability("nfc", "NFC Transceiver", "Direct NFC tag scanning, reading and NDEF payload emulation.", "Nfc", "Exposed", "Sensors"),
-            Capability("bluetooth", "Bluetooth BLE", "Scan and broadcast peripheral signals for desktop context.", "Bluetooth", "Exposed", "Sensors"),
-            Capability("motion", "Motion Telemetry", "Real-time high-frequency accelerometer and gyroscope streaming with low-latency Bluetooth protocols.", "Gesture", "Exposed", "Sensors"),
-            Capability("notifications", "Notification Hub", "Capture and forward phone status/app notifications to desktop.", "NotificationsActive", "Exposed", "Utility"),
-            Capability("sms", "SMS Dispatcher", "Read and send secure transaction/verification SMS payloads.", "Sms", "Exposed", "Utility"),
-            Capability("contacts", "Contacts Booker", "Provide desktop with verified user contact cards on request.", "Contacts", "Exposed", "Security"),
-            Capability("vibration", "Haptic Engine", "Custom waveform tactile haptic feedback triggers.", "Vibration", "Exposed", "Utility")
-        )
+        val dynamicCapabilities = mutableListOf<Capability>()
+        try { if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY))
+            dynamicCapabilities.add(Capability("camera", "Camera Stream", "Live 1080p MJPEG / WebRTC video feed from device camera.", "Videocam", "Exposed", "Media"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("microphone", "Audio Stream", "Opus compressed microphone feed for desktop capturing.", "Mic", "Exposed", "Media"))
+        } catch (_: Exception) {}
+        try { if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LOCATION_GPS))
+            dynamicCapabilities.add(Capability("gps", "GPS Coordinates", "High-accuracy geolocation provider with geofencing.", "LocationOn", "Exposed", "Sensors"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("biometrics", "Biometric Shield", "Secure biometric prompt authentication via Android BiometricPrompt.", "Fingerprint", "Exposed", "Security"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("clipboard", "Clipboard Sync", "Real-time sync of system clipboard across local network.", "Assignment", "Exposed", "Utility"))
+        } catch (_: Exception) {}
+        try { if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_NFC))
+            dynamicCapabilities.add(Capability("nfc", "NFC Transceiver", "NFC tag scanning, reading and NDEF payload emulation.", "Nfc", "Exposed", "Sensors"))
+        } catch (_: Exception) {}
+        try { if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH))
+            dynamicCapabilities.add(Capability("bluetooth", "Bluetooth BLE", "Scan and broadcast peripheral signals for desktop context.", "Bluetooth", "Exposed", "Sensors"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("motion", "Motion Telemetry", "Real-time accelerometer and gyroscope streaming.", "Gesture", "Exposed", "Sensors"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("notifications", "Notification Hub", "Capture and forward phone notifications to desktop.", "NotificationsActive", "Exposed", "Utility"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("sms", "SMS Dispatcher", "Read and send secure transaction SMS payloads.", "Sms", "Exposed", "Utility"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("contacts", "Contacts Booker", "Provide desktop with verified contact cards on request.", "Contacts", "Exposed", "Security"))
+        } catch (_: Exception) {}
+        try { dynamicCapabilities.add(Capability("vibration", "Haptic Engine", "Custom waveform tactile haptic feedback.", "Vibration", "Exposed", "Utility"))
+        } catch (_: Exception) {}
+        _capabilities.value = dynamicCapabilities
     }
 
     private fun loadPlugins() {
-        _plugins.value = listOf(
-            Plugin(
-                id = "p1",
-                name = "Computer Vision Scanner",
-                author = "DeviceAPI Core",
-                description = "Recognizes text, barcodes, QR codes and objects on the camera stream locally.",
-                rating = 4.8f,
-                price = "Free",
-                isInstalled = true,
-                category = "Camera & Vision",
-                status = "Verified",
-                permissions = "CAMERA",
-                sha256 = "c08f43ebf718aa667d81a93bd66c7104b9015bc2f12c1b89ef94d8ee9cd5326a"
-            ),
-            Plugin(
-                id = "p2",
-                name = "HomeAssistant Link",
-                author = "SmartHome Labs",
-                description = "Registers your phone as an active sensor hub inside HomeAssistant dashboard.",
-                rating = 4.7f,
-                price = "$1.99",
-                isInstalled = false,
-                category = "Cross-Device",
-                status = "Verified",
-                permissions = "INTERNET",
-                sha256 = "40be2f6ca267da3984d858ca9d3e8964b732bc0e12ca0df40bd10e7b8ee201ef"
-            ),
-            Plugin(
-                id = "p3",
-                name = "Ambient Audio Analyser",
-                author = "Acoustic AI",
-                description = "Listens to background frequencies to identify songs or environmental decibels.",
-                rating = 4.3f,
-                price = "Free",
-                isInstalled = false,
-                category = "Sensors & Audio",
-                status = "Verified",
-                permissions = "RECORD_AUDIO",
-                sha256 = "65ae0b07cf0fbf7723c3b01fc2e9fcf01177695bc2f12f0ee94d48ef9cd7121b"
-            ),
-            Plugin(
-                id = "p4",
-                name = "Virtual WebCam Driver",
-                author = "Streamers Co",
-                description = "Bridges the camera stream directly into OBS or Zoom as a standard system webcam.",
-                rating = 4.9f,
-                price = "$4.99",
-                isInstalled = false,
-                category = "Cross-Device",
-                status = "Verified",
-                permissions = "CAMERA, INTERNET",
-                sha256 = "901bc09ee2ca0df40bd1de8b248a3c3e80fcf0fbc026fcf0127ca9def0cd93a2"
-            ),
-            Plugin(
-                id = "p5",
-                name = "Raw Gyroscope Streamer",
-                author = "Telemetry Labs",
-                description = "Bypasses standard Android OS delays to sample Gyroscope/Accelerometer at 200Hz. Streams live raw data packets to Python/C++ desktop ML pipelines.",
-                rating = 4.9f,
-                price = "Free",
-                isInstalled = false,
-                category = "Sensor Readers",
-                status = "Verified",
-                permissions = "HIGH_SAMPLING_RATE_SENSORS, INTERNET",
-                sha256 = "fe92901ca9a3e80fcf0fbc026fcf0127ca9def0cd93a290c0bc0928af9cd8876c2"
-            ),
-            Plugin(
-                id = "p6",
-                name = "Secure Clipboard Relayer",
-                author = "Sync Security",
-                description = "Securely synchronizes local clipboard. Uses end-to-end AES-256 encryption to relay clipboard changes to authorized desktop companion nodes.",
-                rating = 4.8f,
-                price = "Free",
-                isInstalled = false,
-                category = "Cross-Device",
-                status = "Verified",
-                permissions = "CLIPBOARD_READ, INTERNET",
-                sha256 = "da89ef94d8ee9cd5326ac08f43ebf718aa667d81a93bd66c7104b9015bc2f12c1b89"
-            )
-        )
+        _plugins.value = emptyList()
     }
 
     private fun registerBatteryReceiver() {
@@ -696,10 +592,10 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                             locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5000L, 5f, this)
                             registered = true
-                            Log.d("DeviceAPIViewModel", "Registered GPS_PROVIDER updates successfully.")
+                            Timber.d("DeviceAPIViewModel", "Registered GPS_PROVIDER updates successfully.")
                         }
                     } catch (e: Exception) {
-                        Log.w("DeviceAPIViewModel", "Failed to register GPS_PROVIDER updates: ${e.message}")
+                        Timber.w("DeviceAPIViewModel", "Failed to register GPS_PROVIDER updates: ${e.message}")
                     }
                 }
 
@@ -710,10 +606,10 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                             locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                             locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 5000L, 5f, this)
                             registered = true
-                            Log.d("DeviceAPIViewModel", "Registered NETWORK_PROVIDER updates successfully.")
+                            Timber.d("DeviceAPIViewModel", "Registered NETWORK_PROVIDER updates successfully.")
                         }
                     } catch (e: Exception) {
-                        Log.w("DeviceAPIViewModel", "Failed to register NETWORK_PROVIDER updates: ${e.message}")
+                        Timber.w("DeviceAPIViewModel", "Failed to register NETWORK_PROVIDER updates: ${e.message}")
                     }
                 }
 
@@ -724,17 +620,17 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                             locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
                             locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 5000L, 5f, this)
                             registered = true
-                            Log.d("DeviceAPIViewModel", "Registered PASSIVE_PROVIDER updates successfully.")
+                            Timber.d("DeviceAPIViewModel", "Registered PASSIVE_PROVIDER updates successfully.")
                         }
                     } catch (e: Exception) {
-                        Log.w("DeviceAPIViewModel", "Failed to register PASSIVE_PROVIDER updates: ${e.message}")
+                        Timber.w("DeviceAPIViewModel", "Failed to register PASSIVE_PROVIDER updates: ${e.message}")
                     }
                 }
             } else {
-                Log.w("DeviceAPIViewModel", "Location permission not granted.")
+                Timber.w("DeviceAPIViewModel", "Location permission not granted.")
             }
         } catch (e: Exception) {
-            Log.e("DeviceAPIViewModel", "Error while registering location updates: ${e.message}")
+            Timber.e("DeviceAPIViewModel", "Error while registering location updates: ${e.message}")
         }
     }
 
@@ -743,7 +639,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             locationManager.removeUpdates(this)
         } catch (e: Exception) {
-            Log.e("DeviceAPIViewModel", "Error unregistering location updates: ${e.message}")
+            Timber.e("DeviceAPIViewModel", "Error unregistering location updates: ${e.message}")
         }
     }
 
@@ -790,106 +686,67 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun startGoogleOAuthFlow(email: String, name: String) {
+        _oauthLogs.value = emptyList()
+        _oauthStage.value = "authorization_request"
+        addOauthLog("[Google Sign-In] Launching real Google Sign-In...")
+        _pendingGoogleSignIn.value = true
+    }
+
+    fun handleGoogleSignInResult(data: Intent?) {
         viewModelScope.launch {
-            _oauthLogs.value = emptyList()
-            addOauthLog("[OAuth 2.0] Initiating PKCE (Proof Key for Code Exchange) flow...")
-            
-            // Generate standard dynamic PKCE verifier and challenge
-            val verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_w" + (1000..9999).random()
-            val challenge = "E9Melhoa2OwvFrGMTJguCH5y" + (10..99).random() + "_Vl15B_G_S1sc_c"
-            _oauthCodeVerifier.value = verifier
-            _oauthCodeChallenge.value = challenge
-            
-            _oauthStage.value = "authorization_request"
-            addOauthLog("[OAuth 2.0] Authorization Endpoint: https://accounts.google.com/o/oauth2/v2/auth")
-            addOauthLog("[OAuth 2.0] Request Params: client_id=97657eec-007b-487d-b422-15e49086681c&redirect_uri=https://com.example/oauth2/callback&response_type=code&scope=openid%20profile%20email&code_challenge=$challenge&code_challenge_method=S256")
-            
-            delay(1000)
-            
-            _oauthStage.value = "code_received"
-            val mockAuthCode = "4/0AQlEs7Mv6Z" + java.util.UUID.randomUUID().toString().replace("-", "").take(20)
-            addOauthLog("[OAuth 2.0] Authorization server verified identity and returned Consent Consent OK.")
-            addOauthLog("[OAuth 2.0] Received temporary Authorization Code: $mockAuthCode")
-            
-            delay(1200)
-            
-            _oauthStage.value = "token_exchange"
-            addOauthLog("[OAuth 2.0] Sending Backchannel Token Exchange Request: POST https://oauth2.googleapis.com/token")
-            addOauthLog("[OAuth 2.0] Payload: grant_type=authorization_code&code=$mockAuthCode&redirect_uri=https://com.example/oauth2/callback&code_verifier=$verifier")
-            
-            delay(1500)
-            
-            _oauthStage.value = "token_verified"
-            val mockAccessToken = "ya29.a0AfB_byD" + java.util.UUID.randomUUID().toString().replace("-", "").take(32)
-            val mockIdToken = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImI3MTM2ZjFjNGU5IiwidHlwIjoiSldUIn0." +
-                "eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJzdWIiOiIxMDQ5MzgyMTcwMzgxMDI5MzgxMDIiLCJhenAiOiI5NzY1N2VlYy0wMDdiLTQ4N2QtYjQyMi0xNWU0OTA4NjY4MWMiLCJlbWFpbCI6IiRlbWFpbCIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiJG5hbWUiLCJwaWN0dXJlIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EvZGVmYXVsdC11c2VyPXM5Ni1jIiwiZXhwIjoxNzgyNjgyNDc0LCJpYXQiOjE3ODI2Nzg4NzR9." +
-                "SignatureValid_ECC384"
-            
-            _oauthAccessToken.value = mockAccessToken
-            _oauthIdToken.value = mockIdToken
-            
-            // Decode claims beautifully to show off cryptography details
-            val decodedJson = """
-                HEADER:
-                {
-                  "alg": "RS256",
-                  "kid": "b7136f1c4e9f7831f49673891007ef1d",
-                  "typ": "JWT"
+            try {
+                val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(data)
+                val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+                val idToken = account?.idToken ?: throw Exception("No ID token received from Google")
+                val email = account.email ?: ""
+                val displayName = account.displayName ?: "User"
+                val photoUrl = account.photoUrl?.toString() ?: ""
+
+                _oauthStage.value = "token_verified"
+                _oauthAccessToken.value = idToken
+                _oauthIdToken.value = idToken
+                addOauthLog("[Google Sign-In] Real ID Token received from Google Services API.")
+                addOauthLog("[Google Sign-In] Account: $email")
+
+                val parts = idToken.split(".")
+                if (parts.size >= 2) {
+                    val decodedBytes = android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE)
+                    val claims = try {
+                        org.json.JSONObject(String(decodedBytes, Charsets.UTF_8)).toString(2)
+                    } catch (e: Exception) { "(unable to decode)" }
+                    _oauthIdTokenDecoded.value = "CLAIMS PAYLOAD:\n$claims"
                 }
-                
-                CLAIMS PAYLOAD:
-                {
-                  "iss": "https://accounts.google.com",
-                  "sub": "google-oauth2|104938217038102938102",
-                  "azp": "97657eec-007b-487d-b422-15e49086681c",
-                  "email": "$email",
-                  "email_verified": true,
-                  "name": "$name",
-                  "picture": "https://lh3.googleusercontent.com/a/default-user=s96-c",
-                  "exp": ${(System.currentTimeMillis() / 1000) + 3600},
-                  "iat": ${System.currentTimeMillis() / 1000},
-                  "nonce": "n-0S6_W8xoY"
+
+                addOauthLog("[Google Sign-In] Authenticating with Firebase using real ID Token...")
+                firebaseManager.signInWithGoogle(idToken, email, displayName, photoUrl)
+
+                _oauthStage.value = "session_active"
+                addOauthLog("[Google Sign-In] Session established via real Google Sign-In.")
+
+                val uid = firebaseManager.currentUserFlow.value?.uid ?: return@launch
+                val savedProfile = firebaseManager.getAdminProfile()
+                if (savedProfile.uid.isBlank()) {
+                    val profile = AdminProfile(
+                        uid = uid,
+                        displayName = displayName,
+                        email = email
+                    )
+                    _adminProfile.value = profile
+                    firebaseManager.saveAdminProfile(profile)
+                } else {
+                    _adminProfile.value = savedProfile
                 }
-            """.trimIndent()
-            _oauthIdTokenDecoded.value = decodedJson
-            
-            addOauthLog("[OAuth 2.0] Token Endpoint returned HTTP 200 OK.")
-            addOauthLog("[OAuth 2.0] Access Token: ${mockAccessToken.take(15)}...")
-            addOauthLog("[OAuth 2.0] Cryptographically validating OIDC Identity Token signature with JWK key standard...")
-            addOauthLog("[OAuth 2.0] Signature Checked: OK. Audience validated: matching Client ID.")
-            
-            delay(1000)
-            
-            _oauthStage.value = "session_active"
-            addOauthLog("[OAuth 2.0] Authenticating with Firebase using returned ID Token...")
-            
-            // Sign in to Firebase/Sandbox using the credential
-            firebaseManager.signInWithGoogle(mockIdToken, email, name, "https://lh3.googleusercontent.com/a/default-user=s96-c")
-            
-            // Sync AdminProfile metadata
-            val defaultProfile = AdminProfile(
-                uid = firebaseManager.currentUserFlow.value?.uid ?: "oauth_uid_123",
-                displayName = name,
-                email = email,
-                organization = "Cloud Synchronized Labs",
-                developerRole = "Verified Hardware Developer",
-                apiKey = "pk_oauth_" + java.util.UUID.randomUUID().toString().replace("-", "").take(16),
-                maxDevices = 15,
-                securityLevel = "SHA256withRSA + OIDC Token"
-            )
-            _adminProfile.value = defaultProfile
-            firebaseManager.saveAdminProfile(defaultProfile)
-            
-            addAuditLog(AuditLog(
-                method = "OAUTH",
-                endpoint = "/oauth/v2/userinfo",
-                caller = "google_account_auth",
-                status = 200,
-                payload = "{\"authorized_email\": \"$email\", \"name\": \"$name\", \"session_secured\": true}",
-                type = "Auth"
-            ))
-            
-            addOauthLog("[OAuth 2.0] Session established successfully. Cloud-synced profile metadata secure.")
+
+                addAuditLog(AuditLog(
+                    method = "OAUTH", endpoint = "/oauth/v2/userinfo",
+                    caller = "google_account_auth", status = 200,
+                    payload = "{\"authorized_email\": \"$email\", \"session_secured\": true}",
+                    type = "Auth"
+                ))
+            } catch (e: Exception) {
+                _oauthStage.value = "idle"
+                addOauthLog("[Google Sign-In] Failed: ${e.message}")
+            }
         }
     }
 
@@ -934,7 +791,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                 ))
             }
         } catch (e: Exception) {
-            Log.e("DeviceAPIViewModel", "Failed to start BatteryMonitoringService: ${e.message}")
+            Timber.e("DeviceAPIViewModel", "Failed to start BatteryMonitoringService: ${e.message}")
         }
     }
 
@@ -953,7 +810,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                 ))
             }
         } catch (e: Exception) {
-            Log.e("DeviceAPIViewModel", "Failed to stop BatteryMonitoringService: ${e.message}")
+            Timber.e("DeviceAPIViewModel", "Failed to stop BatteryMonitoringService: ${e.message}")
         }
     }
 
@@ -1026,28 +883,39 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // Connect to actual discovered device
     fun initiatePairing(deviceName: String, deviceIp: String) {
         viewModelScope.launch {
             _connectionState.value = ConnectionState(ConnectionStatus.CONNECTING)
-            delay(1500) // Authentic network negotiation delay
-            _connectionState.value = ConnectionState(
-                status = ConnectionStatus.CONNECTED,
-                pairedDeviceName = deviceName,
-                pairedDeviceIp = deviceIp,
-                securityMode = "LAN (TLS 1.3 / AES-256-GCM)",
-                pingMs = (2..15).random() // realistic local network ping
-            )
-            
-            val log = AuditLog(
-                method = "SYS",
-                endpoint = "/handshake",
-                caller = "local_network_discovery",
-                status = 200,
-                payload = "Pairing handshake success. Keys exchanged securely with $deviceName.",
-                type = "Auth"
-            )
-            addAuditLog(log)
+            val pingStart = System.currentTimeMillis()
+            try {
+                val socket = java.net.Socket()
+                socket.connect(java.net.InetSocketAddress(deviceIp, 8080), 3000)
+                socket.close()
+                val pingMs = System.currentTimeMillis() - pingStart
+                _connectionState.value = ConnectionState(
+                    status = ConnectionStatus.CONNECTED,
+                    pairedDeviceName = deviceName,
+                    pairedDeviceIp = deviceIp,
+                    securityMode = "LAN (TLS 1.3 / AES-256-GCM)",
+                    pingMs = pingMs.toInt()
+                )
+                val log = AuditLog(
+                    method = "SYS", endpoint = "/handshake",
+                    caller = "local_network_discovery", status = 200,
+                    payload = "Pairing handshake success with $deviceName.",
+                    type = "Auth"
+                )
+                addAuditLog(log)
+            } catch (e: Exception) {
+                _connectionState.value = ConnectionState(ConnectionStatus.FAILED)
+                val log = AuditLog(
+                    method = "SYS", endpoint = "/handshake",
+                    caller = "local_network_discovery", status = 500,
+                    payload = "Pairing failed: ${e.message}",
+                    type = "Auth"
+                )
+                addAuditLog(log)
+            }
         }
     }
 
@@ -1132,11 +1000,9 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                 socket.close()
                 true
             } catch (e: Exception) {
-                Log.e("WoL", "Failed to send Wake-on-LAN packet", e)
+                Timber.e("WoL", "Failed to send Wake-on-LAN packet", e)
                 false
             }
-            
-            delay(1500) // Aesthetic progress delay for handshaking
             
             withContext(Dispatchers.Main) {
                 _wolDevices.value = _wolDevices.value.map {
@@ -1303,11 +1169,11 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun forceEvaluateWorkflow(id: String, mockPayload: String = "User Manual Test") {
+    fun forceEvaluateWorkflow(id: String, payload: String = "Manual Trigger") {
         viewModelScope.launch {
             val wf = _workflows.value.find { it.id == id } ?: return@launch
             addAutomationLog("⚡ Manually testing workflow: '${wf.title}'...")
-            executeAction(wf.action, wf.title, mockPayload)
+            executeAction(wf.action, wf.title, payload)
         }
     }
 
@@ -1680,16 +1546,12 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             logStep("⚡ Initializing secure isolated sandbox verification pipeline...")
-            delay(1000)
 
             logStep("🔑 Extracting code digest and verifying SHA-256 integrity: $shaValue")
-            delay(800)
 
             logStep("📝 Code size: ${code.length} bytes. Parsing abstract syntax tree (AST)...")
-            delay(1000)
 
             logStep("🔍 Running static analysis on code snippet...")
-            delay(800)
 
             // Let's vet the code for potential security issues
             val codeLower = code.lowercase()
@@ -1733,16 +1595,12 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                 ))
             } else {
                 logStep("✅ Static check passed: 0 vulnerabilities, 0 unsafe reflection nodes, 0 socket leaks.")
-                delay(800)
 
                 logStep("🛡️ Verifying permissions: $permissions")
-                delay(600)
 
                 logStep("🔄 Performing restricted sandbox dry run in virtual environment...")
-                delay(1200)
 
                 logStep("📊 Sandbox Telemetry: Memory peak 12.4MB, CPU threads bounded, No background service leaks.")
-                delay(800)
 
                 logStep("🎖️ Platform verification signature successfully attached. Generating verified developer manifest.")
                 logStep("💚 VETTING STATUS: VERIFIED.")
@@ -1792,7 +1650,6 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                     payload = "$formatPrefix $msg",
                     type = "System"
                 ))
-                delay(600)
             }
 
             runLog("Initializing plugin runtime hooks inside secure isolate container...")
@@ -1847,82 +1704,16 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         _logs.value = listOf(log) + _logs.value
     }
 
-    // Simulated REST/WebSocket API logs from paired Desktop Agent
-    private fun startTrafficSimulator() {
+    fun startTrafficMonitor() {
         trafficSimulatorJob?.cancel()
         trafficSimulatorJob = viewModelScope.launch {
-            while (true) {
-                delay(8000) // simulated request every 8 seconds
-                if (_connectionState.value.status == ConnectionStatus.CONNECTED) {
-                    val activeStreaming = _capabilities.value.filter { it.isStreaming }
-                    val isCameraStreaming = activeStreaming.any { it.id == "camera" }
-                    val isMicStreaming = activeStreaming.any { it.id == "microphone" }
-
-                    val method: String
-                    val endpoint: String
-                    val payload: String
-
-                    when ((0..4).random()) {
-                        0 -> {
-                            method = "GET"
-                            endpoint = "/api/v1/sensors/accelerometer"
-                            val accel = _sensorAccel.value
-                            payload = "{\"x\": ${String.format("%.3f", accel.first)}, \"y\": ${String.format("%.3f", accel.second)}, \"z\": ${String.format("%.3f", accel.third)}, \"unit\": \"m/s²\"}"
-                        }
-                        1 -> {
-                            method = "GET"
-                            endpoint = "/api/v1/sensors/battery"
-                            val bat = _batteryStatus.value
-                            payload = "{\"level\": ${bat.first}, \"status\": \"${bat.second}\", \"health\": \"Good\"}"
-                        }
-                        2 -> {
-                            method = "POST"
-                            endpoint = "/api/v1/clipboard/set"
-                            payload = "{\"text\": \"https://ai.studio/build - Desktop Agent Synced!\", \"timestamp\": ${System.currentTimeMillis()}}"
-                        }
-                        3 -> {
-                            if (isCameraStreaming) {
-                                val tokens = com.example.data.CameraStreamController.accessTokens.value.filter { it.isValid }
-                                val useValidToken = tokens.isNotEmpty() && (0..4).random() > 0 // 80% chance of using a valid token if one exists
-                                
-                                val tokenValue = if (useValidToken) {
-                                    tokens.random().token
-                                } else {
-                                    "cam_invalid_or_expired_999"
-                                }
-                                
-                                val agentName = if (useValidToken) {
-                                    "Autonomous AI Agent (GPT-4o Vision)"
-                                } else {
-                                    "Unauthorized Ext Agent (ScanBot-Net)"
-                                }
-                                
-                                val response = com.example.data.CameraStreamController.getLatestFrameSecurely(tokenValue, agentName)
-                                
-                                method = "GET"
-                                endpoint = "/api/v1/camera/stream?token=${tokenValue.take(8)}..."
-                                payload = "{\"status\": \"${response.second}\", \"bytes_received\": ${response.first?.size ?: 0}}"
-                            } else {
-                                method = "GET"
-                                endpoint = "/api/v1/gps/coordinates"
-                                val gps = _gpsCoords.value
-                                payload = "{\"latitude\": ${gps.first}, \"longitude\": ${gps.second}, \"accuracy_m\": 3.2}"
-                            }
-                        }
-                        else -> {
-                            method = "GET"
-                            endpoint = "/api/v1/device/info"
-                            payload = "{\"manufacturer\": \"${android.os.Build.MANUFACTURER}\", \"model\": \"${android.os.Build.MODEL}\", \"api_level\": ${android.os.Build.VERSION.SDK_INT}}"
-                        }
-                    }
-
+            serverManager.serverLogs.collect { logLines ->
+                val lastLine = logLines.firstOrNull() ?: return@collect
+                if (lastLine.contains("GET ") || lastLine.contains("POST ") || lastLine.contains("PUT ") || lastLine.contains("DELETE ")) {
                     addAuditLog(AuditLog(
-                        method = method,
-                        endpoint = endpoint,
-                        caller = "Studio Desktop (Mac Studio)",
-                        status = 200,
-                        payload = payload,
-                        type = "API"
+                        method = "SYS", endpoint = "/server",
+                        caller = "kio_server", status = 200,
+                        payload = lastLine, type = "System"
                     ))
                 }
             }
@@ -1993,7 +1784,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         
         registrationListener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(NsdServiceInfo: NsdServiceInfo) {
-                Log.d("NSD", "Service registered: ${NsdServiceInfo.serviceName}")
+                Timber.d("NSD", "Service registered: ${NsdServiceInfo.serviceName}")
             }
             override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
             override fun onServiceUnregistered(arg0: NsdServiceInfo) {}
@@ -2003,7 +1794,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, registrationListener)
         } catch (e: Exception) {
-            Log.e("NSD", "Failed to register service: ${e.message}")
+            Timber.e("NSD", "Failed to register service: ${e.message}")
         }
 
         discoveryListener = object : NsdManager.DiscoveryListener {
@@ -2026,7 +1817,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                         })
                     } catch (e: Exception) {
-                        Log.e("NSD", "Resolve failed", e)
+                        Timber.e("NSD", "Resolve failed", e)
                     }
                 }
             }
@@ -2047,7 +1838,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
         } catch (e: Exception) {
-            Log.e("NSD", "Failed to discover services: ${e.message}")
+            Timber.e("NSD", "Failed to discover services: ${e.message}")
         }
     }
 
@@ -2072,9 +1863,9 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                 _bluetoothPairedDevices.value = paired
             }
         } catch (e: SecurityException) {
-            Log.e("DeviceAPIViewModel", "Bluetooth permission not granted for bonded devices check")
+            Timber.e("DeviceAPIViewModel", "Bluetooth permission not granted for bonded devices check")
         } catch (e: Exception) {
-            Log.e("DeviceAPIViewModel", "Bluetooth adapter not found or disabled: ${e.message}")
+            Timber.e("DeviceAPIViewModel", "Bluetooth adapter not found or disabled: ${e.message}")
         }
     }
 
@@ -2090,7 +1881,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                 val adapter = bluetoothManager?.adapter
                 val scanner = adapter?.bluetoothLeScanner
                 if (scanner != null) {
-                    Log.d("DeviceAPIViewModel", "Starting actual BLE scanner hardware scan.")
+                    Timber.d("DeviceAPIViewModel", "Starting actual BLE scanner hardware scan.")
                     
                     scanCallback = object : android.bluetooth.le.ScanCallback() {
                         override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
@@ -2134,10 +1925,10 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                         type = "System"
                     ))
                 } else {
-                    Log.w("DeviceAPIViewModel", "Scanner not available.")
+                    Timber.w("DeviceAPIViewModel", "Scanner not available.")
                 }
             } catch (e: SecurityException) {
-                Log.w("DeviceAPIViewModel", "Bluetooth scan permission missing.")
+                Timber.w("DeviceAPIViewModel", "Bluetooth scan permission missing.")
                 addAuditLog(AuditLog(
                     method = "DISCOVER",
                     endpoint = "/bluetooth/ble/scan",
@@ -2147,7 +1938,7 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                     type = "System"
                 ))
             } catch (e: Exception) {
-                Log.e("DeviceAPIViewModel", "Exception during BLE scan", e)
+                Timber.e("DeviceAPIViewModel", "Exception during BLE scan", e)
             } finally {
                 _isBleScanning.value = false
             }
@@ -2168,10 +1959,10 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
                             android.bluetooth.BluetoothGattService.SERVICE_TYPE_PRIMARY
                         )
                         gattServer.addService(service)
-                        Log.i("DeviceAPIViewModel", "GATT Service published successfully.")
+                        Timber.i("DeviceAPIViewModel", "GATT Service published successfully.")
                     }
                 } catch (e: Exception) {
-                    Log.w("DeviceAPIViewModel", "Bluetooth permission not yet granted. Emulating secure GATT advertisement.")
+                    Timber.w("DeviceAPIViewModel", "Bluetooth permission not yet granted. Emulating secure GATT advertisement.")
                 }
 
                 addAuditLog(AuditLog(
@@ -2284,16 +2075,16 @@ class DeviceAPIViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     
-    fun simulatePasskeyAuth(id: String) {
+    fun logPasskeyAssertion(id: String) {
         val key = _passkeys.value.find { it.id == id }
         key?.let {
             viewModelScope.launch {
                 addAuditLog(AuditLog(
                     method = "POST",
                     endpoint = "/api/v1/auth/passkey/assertion",
-                    caller = "windows_laptop_bridge",
+                    caller = "desktop_client",
                     status = 200,
-                    payload = "{\"assertionSignature\": \"sig_ecc_${java.util.UUID.randomUUID().toString().replace("-", "").take(16)}\", \"verifiedClient\": \"${it.name}\", \"hardwareEnclave\": \"Android Keystore StrongBox\"}",
+                    payload = "{\"verifiedClient\": \"${it.name}\"}",
                     type = "Auth"
                 ))
             }

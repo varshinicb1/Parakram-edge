@@ -68,8 +68,7 @@ object MotionStreamController {
     val protocols = listOf(
         "BLE L2CAP Channel",       // Raw, ultra low latency
         "BLE GATT Notification",    // Event-driven characteristic notify
-        "Bluetooth RFCOMM Socket",  // SPP classical streams
-        "Secure Mock Airwave"      // Encrypted local emulation
+        "Bluetooth RFCOMM Socket"   // SPP classical streams
     )
 
     // Callback to alert ViewModel / Audit logs
@@ -100,17 +99,10 @@ object MotionStreamController {
         packetCounter++
         _totalPackets.value = packetCounter
 
-        // Each packet carries: timestamp(8B), accel(12B), gyro(12B), header(4B) = ~36 bytes raw
-        val packetSize = if (_selectedProtocol.value.contains("L2CAP")) 32 else 48
+        val packetSize = 128
         _totalBytes.value += packetSize
 
-        // Fluctuate latency slightly based on selected protocol
-        val baseLatency = when (_selectedProtocol.value) {
-            "BLE L2CAP Channel" -> 1.5f + kotlin.random.Random.nextFloat() * 0.5f
-            "BLE GATT Notification" -> 3.2f + kotlin.random.Random.nextFloat() * 0.9f
-            "Bluetooth RFCOMM Socket" -> 4.8f + kotlin.random.Random.nextFloat() * 1.5f
-            else -> 0.8f + kotlin.random.Random.nextFloat() * 0.2f
-        }
+        val baseLatency = kotlin.random.Random.nextFloat() * 5.0f
         _currentLatencyMs.value = baseLatency
 
         // Update rolling histories (maintain last 40 samples)

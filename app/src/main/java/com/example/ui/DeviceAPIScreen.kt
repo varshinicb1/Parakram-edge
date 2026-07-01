@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -75,6 +76,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.os.Vibrator
 import android.os.VibrationEffect
 import android.os.Build
+import timber.log.Timber
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -384,12 +386,18 @@ fun AuthScreen(
 ) {
     var email by remember { mutableStateOf("cbvarshini1@gmail.com") }
     var name by remember { mutableStateOf("Varshini C B") }
-    
+    val ctx = LocalContext.current
+
     val oauthStage by viewModel.oauthStage.collectAsState()
     val oauthLogs by viewModel.oauthLogs.collectAsState()
-    val oauthCodeVerifier by viewModel.oauthCodeVerifier.collectAsState()
-    val oauthCodeChallenge by viewModel.oauthCodeChallenge.collectAsState()
     val oauthIdTokenDecoded by viewModel.oauthIdTokenDecoded.collectAsState()
+
+    // Launcher must stay in composition always — never inside a conditional branch
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        viewModel.handleGoogleSignInResult(result.data)
+    }
 
     Box(
         modifier = Modifier
@@ -445,13 +453,17 @@ fun AuthScreen(
                         color = TextPrimary,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "Smart P2P Hardware Extension Layer",
                         color = TextSecondary,
                         fontSize = 11.sp,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -491,9 +503,8 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("PKCE SHA256 CRYPTOGRAPHIC INTEGRITY", color = ChromeYellow, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                                Text("Code Verifier:  $oauthCodeVerifier", color = TextSecondary, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
-                                Text("Code Challenge: $oauthCodeChallenge", color = TextSecondary, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+                                Text("OAUTH 2.0 / OPENID CONNECT", color = ChromeYellow, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                Text("Stage: ${viewModel.oauthStage.value}", color = TextSecondary, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
                             }
                         }
 
@@ -588,17 +599,21 @@ fun AuthScreen(
                             tint = if (isFirebaseAvailable) ChromeYellow else ElectricOrange,
                             modifier = Modifier.size(18.dp)
                         )
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = if (isFirebaseAvailable) "Enterprise Firebase Active" else "Sandbox Offline Shield",
                                 color = TextPrimary,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = if (isFirebaseAvailable) "Secure cloud profile sync validated" else "Local security model active — no remote logs",
                                 color = TextSecondary,
-                                fontSize = 9.sp
+                                fontSize = 9.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -637,28 +652,37 @@ fun AuthScreen(
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    // Authentic Google OAuth 2.0 Sign-In trigger button
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.startGoogleOAuthFlow(email, name)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .border(1.dp, ChocolateBorder, RoundedCornerShape(12.dp)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    if (isFirebaseAvailable) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.startGoogleOAuthFlow(email, name)
+                                val gso = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
+                                    com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
+                                )
+                                    .requestIdToken(viewModel.oauthClientId.value)
+                                    .requestEmail()
+                                    .build()
+                                val googleSignInClient = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(ctx, gso)
+                                googleSignInLauncher.launch(googleSignInClient.signInIntent)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .border(1.dp, ChocolateBorder, RoundedCornerShape(12.dp)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Image(
-                                painter = painterResource(id = com.example.R.drawable.ic_google_logo),
-                                contentDescription = "Google Logo",
-                                modifier = Modifier.size(18.dp)
-                              )
-                            Text("Google Single Sign-Up (OAuth 2.0)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Image(
+                                    painter = painterResource(id = com.example.R.drawable.ic_google_logo),
+                                    contentDescription = "Google Logo",
+                                    modifier = Modifier.size(18.dp)
+                                  )
+                                Text("Google Single Sign-Up (OAuth 2.0)", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
 
@@ -934,6 +958,7 @@ fun ConnectionStatusWidget(
                             ConnectionStatus.CONNECTED -> connectionState.pairedDeviceName ?: "Paired Node"
                             ConnectionStatus.CONNECTING -> "Handshaking..."
                             ConnectionStatus.DISCONNECTED -> "Device Offline"
+                            ConnectionStatus.FAILED -> "Connection Failed"
                         },
                         color = TextPrimary,
                         fontSize = 18.sp,
@@ -952,14 +977,16 @@ fun ConnectionStatusWidget(
                                 ConnectionStatus.CONNECTED -> ElectricGreen.copy(alpha = 0.15f)
                                 ConnectionStatus.CONNECTING -> ElectricOrange.copy(alpha = 0.15f)
                                 ConnectionStatus.DISCONNECTED -> CyberRed.copy(alpha = 0.15f)
+                                ConnectionStatus.FAILED -> CyberRed.copy(alpha = 0.15f)
                             }
                         )
                         .border(
                             1.dp,
-                            when (connectionState.status) {
+                             when (connectionState.status) {
                                 ConnectionStatus.CONNECTED -> ElectricGreen.copy(alpha = 0.5f)
                                 ConnectionStatus.CONNECTING -> ElectricOrange.copy(alpha = 0.5f)
                                 ConnectionStatus.DISCONNECTED -> CyberRed.copy(alpha = 0.5f)
+                                ConnectionStatus.FAILED -> CyberRed.copy(alpha = 0.5f)
                             },
                             RoundedCornerShape(20.dp)
                         )
@@ -974,6 +1001,7 @@ fun ConnectionStatusWidget(
                                     ConnectionStatus.CONNECTED -> ElectricGreen
                                     ConnectionStatus.CONNECTING -> ElectricOrange
                                     ConnectionStatus.DISCONNECTED -> CyberRed
+                                    ConnectionStatus.FAILED -> CyberRed
                                 }
                             )
                     )
@@ -983,6 +1011,7 @@ fun ConnectionStatusWidget(
                             ConnectionStatus.CONNECTED -> ElectricGreen
                             ConnectionStatus.CONNECTING -> ElectricOrange
                             ConnectionStatus.DISCONNECTED -> CyberRed
+                            ConnectionStatus.FAILED -> CyberRed
                         },
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
@@ -996,17 +1025,17 @@ fun ConnectionStatusWidget(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
-                        Text("IP ADDRESS", color = TextSecondary, fontSize = 10.sp)
-                        Text(connectionState.pairedDeviceIp ?: "N/A", color = TextPrimary, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("IP ADDRESS", color = TextSecondary, fontSize = 10.sp, maxLines = 1)
+                        Text(connectionState.pairedDeviceIp ?: "N/A", color = TextPrimary, fontSize = 12.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Column {
-                        Text("TUNNEL PROTOCOL", color = TextSecondary, fontSize = 10.sp)
-                        Text(connectionState.securityMode ?: "N/A", color = TextPrimary, fontSize = 12.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("TUNNEL PROTOCOL", color = TextSecondary, fontSize = 10.sp, maxLines = 1)
+                        Text(connectionState.securityMode ?: "N/A", color = TextPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("LATENCY", color = TextSecondary, fontSize = 10.sp)
-                        Text("${connectionState.pingMs} ms", color = ElectricGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(0.7f)) {
+                        Text("LATENCY", color = TextSecondary, fontSize = 10.sp, maxLines = 1)
+                        Text("${connectionState.pingMs} ms", color = ElectricGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
                 
@@ -1444,11 +1473,12 @@ fun CapabilityDetailSheet(
                                     Text("WGS-84 Telemetry Core", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     Text("LATITUDE: ${gps.first}", color = TextSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                                     Text("LONGITUDE: ${gps.second}", color = TextSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                                    Text("ACCURACY: ±3.2 meters", color = ElectricGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    val accText = if (viewModel.hasGpsFix) "ACCURACY: REAL-TIME" else "ACCURACY: UNAVAILABLE"
+                                    Text(accText, color = ElectricGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                             "clipboard" -> {
-                                var clipboardText by remember { mutableStateOf("Desktop Agent copied: https://github.com/deviceapi/sdk") }
+                                var clipboardText by remember { mutableStateOf("") }
                                 Column(
                                     modifier = Modifier.padding(16.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1488,6 +1518,7 @@ fun CapabilityDetailSheet(
                             }
                             "biometrics" -> {
                                 var authState by remember { mutableStateOf("READY") }
+                                val ctx = LocalContext.current
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1505,28 +1536,45 @@ fun CapabilityDetailSheet(
                                             .clickable {
                                                 if (authState == "READY") {
                                                     authState = "AUTHENTICATING"
-                                                    scope.launch {
-                                                        delay(1200)
-                                                        authState = "SUCCESS"
-                                                        viewModel.addAuditLog(AuditLog(
-                                                            method = "POST",
-                                                            endpoint = "/api/v1/security/authenticate",
-                                                            caller = "mac_studio_agent",
-                                                            status = 200,
-                                                            payload = "{\"biometric_verified\": true, \"hardware_key_secured\": true}",
-                                                            type = "Auth"
-                                                        ))
-                                                        delay(1000)
-                                                        authState = "READY"
-                                                    }
+                                                    val executor = ContextCompat.getMainExecutor(ctx)
+                                                    val biometricPrompt = androidx.biometric.BiometricPrompt(
+                                                        ctx as? androidx.fragment.app.FragmentActivity ?: return@clickable,
+                                                        executor,
+                                                        object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                                                            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                                                                authState = "SUCCESS"
+                                                                scope.launch {
+                                                                    viewModel.addAuditLog(AuditLog(
+                                                                        method = "POST", endpoint = "/api/v1/security/authenticate",
+                                                                        caller = "device_owner", status = 200,
+                                                                        payload = "{\"biometric_verified\": true}",
+                                                                        type = "Auth"
+                                                                    ))
+                                                                    delay(1500); authState = "READY"
+                                                                }
+                                                            }
+                                                            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                                                authState = "READY"
+                                                            }
+                                                            override fun onAuthenticationFailed() {
+                                                                authState = "READY"
+                                                            }
+                                                        }
+                                                    )
+                                                    val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                                                        .setTitle("Biometric Authentication")
+                                                        .setSubtitle("Verify identity to release secure key")
+                                                        .setNegativeButtonText("Cancel")
+                                                        .build()
+                                                    biometricPrompt.authenticate(promptInfo)
                                                 }
                                             }
                                     )
                                     Text(
                                         text = when (authState) {
-                                            "AUTHENTICATING" -> "Place Finger on Scanner..."
+                                            "AUTHENTICATING" -> "Authenticate using device biometrics..."
                                             "SUCCESS" -> "Access Granted (AES Key Released)"
-                                            else -> "Tap Fingerprint to Test Challenge"
+                                            else -> "Tap Fingerprint to Authenticate"
                                         },
                                         color = when (authState) {
                                             "SUCCESS" -> ElectricGreen
@@ -1821,7 +1869,8 @@ fun ServerTab(viewModel: DeviceAPIViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .background(ObsidianBackground)
-            .padding(top = 48.dp, start = 16.dp, end = 16.dp, bottom = 16.dp),
+            .padding(top = 48.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
         // Header
@@ -3666,7 +3715,7 @@ fun WindowsPasskeyHub(
             BiometricAuthDialog(
                 deviceName = key.name,
                 onSuccess = {
-                    viewModel.simulatePasskeyAuth(pkId)
+                    viewModel.logPasskeyAssertion(pkId)
                     showAuthDialogId = null
                 },
                 onDismiss = { showAuthDialogId = null }
@@ -3691,8 +3740,9 @@ fun BiometricAuthDialog(
     onSuccess: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var state by remember { mutableStateOf("ready") } // "ready", "scanning", "success"
+    var state by remember { mutableStateOf("ready") }
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -3748,12 +3798,29 @@ fun BiometricAuthDialog(
                         .clickable {
                             if (state == "ready") {
                                 state = "scanning"
-                                scope.launch {
-                                    delay(1200)
-                                    state = "success"
-                                    delay(800)
-                                    onSuccess()
-                                }
+                                val executor = ContextCompat.getMainExecutor(ctx)
+                                val biometricPrompt = androidx.biometric.BiometricPrompt(
+                                    ctx as? androidx.fragment.app.FragmentActivity ?: return@clickable,
+                                    executor,
+                                    object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                                        override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                                            state = "success"
+                                            scope.launch { delay(800); onSuccess() }
+                                        }
+                                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                            state = "ready"
+                                        }
+                                        override fun onAuthenticationFailed() {
+                                            state = "ready"
+                                        }
+                                    }
+                                )
+                                val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                                    .setTitle("Biometric Handshake")
+                                    .setSubtitle("Authenticate for $deviceName")
+                                    .setNegativeButtonText("Cancel")
+                                    .build()
+                                biometricPrompt.authenticate(promptInfo)
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -3793,8 +3860,8 @@ fun BiometricAuthDialog(
 
                 Text(
                     text = when (state) {
-                        "ready" -> "Place and hold fingerprint to sign challenge"
-                        "scanning" -> "Verifying biometrics inside secure element..."
+                        "ready" -> "Tap to start biometric authentication"
+                        "scanning" -> "Waiting for biometric verification..."
                         "success" -> "WebAuthn signature generated successfully!"
                         else -> ""
                     },
@@ -7400,7 +7467,7 @@ fun AutomationTab(viewModel: DeviceAPIViewModel) {
                 }
 
                 Text(
-                    "You don't need to shake your phone or drain your battery to test! Use these simulator buttons to instantly fire events to the evaluation engine and check action flows.",
+                    "Test your automation workflows by firing trigger events manually. Use real device sensors or these buttons to evaluate actions.",
                     color = TextSecondary,
                     fontSize = 13.sp
                 )
@@ -7411,12 +7478,12 @@ fun AutomationTab(viewModel: DeviceAPIViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Button(
-                        onClick = { viewModel.evaluateTriggers("Device Shaken", "Simulated shake: acceleration magnitude 19.8 m/s²") },
+                        onClick = { viewModel.evaluateTriggers("Device Shaken", "Manual trigger: acceleration magnitude 19.8 m/s²") },
                         colors = ButtonDefaults.buttonColors(containerColor = MediumGray, contentColor = TextPrimary),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.height(38.dp).testTag("sim_shake_btn")
                     ) {
-                        Text("Simulate Shake", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Trigger Shake", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Button(
@@ -7786,7 +7853,7 @@ fun LiveQRScannerComponent(
                                                 imageAnalysis
                                             )
                                         } catch (e: Exception) {
-                                            android.util.Log.e("LiveQRScanner", "Failed to bind camera scanner: ${e.message}")
+                                            Timber.e("LiveQRScanner", "Failed to bind camera scanner: ${e.message}")
                                         }
                                     }, ContextCompat.getMainExecutor(ctx))
                                     previewView

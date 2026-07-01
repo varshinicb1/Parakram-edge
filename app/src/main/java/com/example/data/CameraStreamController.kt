@@ -8,7 +8,11 @@ import androidx.camera.core.ImageProxy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import timber.log.Timber
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 data class CameraStreamAccessToken(
     val id: String,
@@ -51,6 +55,44 @@ object CameraStreamController {
 
     // Callback to let ViewModel record access logs in real-time
     var onAgentAccessCallback: ((String, String, Boolean, String) -> Unit)? = null
+
+    // 32-byte random seed, generated once on first use, persisted across process lifetime
+    private val hmacKey: ByteArray = java.util.UUID.randomUUID().toString().repeat(2).toByteArray().copyOf(32)
+
+    /** Create an HMAC-SHA256 signature for a token ID. */
+    fun signTokenId(tokenId: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
+        return mac.doFinal(tokenId.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+
+    /** Create a token whose `token` field is `id.signature`. */
+    fun createSignedToken(description: String, isFrontCamera: Boolean, resolutionLimit: String, fpsLimit: Int, durationMinutes: Int): CameraStreamAccessToken {
+        val id = java.util.UUID.randomUUID().toString()
+        val token = CameraStreamAccessToken(
+            id = id,
+            token = "$id.${signTokenId(id)}",
+            description = description,
+            isFrontCamera = isFrontCamera,
+            resolutionLimit = resolutionLimit,
+            fpsLimit = fpsLimit,
+            durationMinutes = durationMinutes
+        )
+        addToken(token)
+        return token
+    }
+
+    /** Verify an HMAC-signed token value of the form `id.signature`. */
+    fun verifySignedToken(tokenValue: String): CameraStreamAccessToken? {
+        val dot = tokenValue.lastIndexOf('.')
+        if (dot <= 0 || dot >= tokenValue.length - 1) return null
+        val id = tokenValue.substring(0, dot)
+        val signature = tokenValue.substring(dot + 1)
+        val expected = signTokenId(id)
+        val match = MessageDigest.isEqual(signature.toByteArray(), expected.toByteArray())
+        if (!match) return null
+        return _accessTokens.value.find { it.id == id && it.token == tokenValue }
+    }
 
     fun addToken(token: CameraStreamAccessToken) {
         _accessTokens.value = _accessTokens.value + token
@@ -101,7 +143,7 @@ object CameraStreamController {
                 )
             }
         } catch (e: Exception) {
-            android.util.Log.e("CameraStreamController", "Error processing image proxy: ${e.message}")
+            Timber.e("CameraStreamController", "Error processing image proxy: ${e.message}")
         } finally {
             imageProxy.close()
         }
@@ -111,10 +153,10 @@ object CameraStreamController {
      * Real-time validation endpoint logic for external AI Agents or desktop utility.
      */
     fun getLatestFrameSecurely(tokenValue: String, agentName: String): Pair<ByteArray?, String> {
-        val token = _accessTokens.value.find { it.token == tokenValue }
+        val token = verifySignedToken(tokenValue)
         
         if (token == null) {
-            onAgentAccessCallback?.invoke(agentName, tokenValue, false, "Invalid access token structure")
+            onAgentAccessCallback?.invoke(agentName, tokenValue, false, "Invalid or forged token")
             return Pair(null, "ERROR: Invalid Token")
         }
 
@@ -160,7 +202,7 @@ object CameraStreamController {
             yuvImage.compressToJpeg(Rect(0, 0, imageProxy.width, imageProxy.height), 30, out) // 30% quality for network efficiency
             return out.toByteArray()
         } catch (e: Exception) {
-            android.util.Log.e("CameraStreamController", "Failed converting image proxy to JPEG: ${e.message}")
+            Timber.e("CameraStreamController", "Failed converting image proxy to JPEG: ${e.message}")
             return null
         }
     }

@@ -2,9 +2,13 @@ package com.example.data.firebase
 
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
+import timber.log.Timber
 import com.example.data.AuditLog
 import com.example.data.AutomationWorkflow
+import com.example.data.local.AdminProfileEntity
+import com.example.data.local.AppDatabase
+import com.example.data.local.AuditLogEntity
+import com.example.data.local.WorkflowEntity
 import com.google.firebase.FirebaseApp
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
@@ -15,7 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.tasks.await
 
-class FirebaseManager(private val context: Context) {
+class FirebaseManager(private val context: Context, private val db: AppDatabase? = null) {
     private var auth: FirebaseAuth? = null
     private var firestore: FirebaseFirestore? = null
     private var analytics: FirebaseAnalytics? = null
@@ -40,13 +44,13 @@ class FirebaseManager(private val context: Context) {
                     val user = firebaseAuth.currentUser
                     _currentUserFlow.value = user?.toUserSession()
                 }
-                Log.d("FirebaseManager", "Firebase successfully initialized and available (with Analytics).")
+                Timber.d("FirebaseManager", "Firebase successfully initialized and available (with Analytics).")
             } else {
-                Log.w("FirebaseManager", "FirebaseApp is not initialized. Using Sandbox mode.")
+                Timber.w("FirebaseManager", "FirebaseApp is not initialized. Using Sandbox mode.")
                 _isFirebaseAvailable.value = false
             }
         } catch (e: Exception) {
-            Log.e("FirebaseManager", "Failed to initialize Firebase: ${e.message}. Using Sandbox mode.")
+            Timber.e("FirebaseManager", "Failed to initialize Firebase: ${e.message}. Using Sandbox mode.")
             _isFirebaseAvailable.value = false
         }
     }
@@ -55,30 +59,34 @@ class FirebaseManager(private val context: Context) {
         if (_isFirebaseAvailable.value) {
             try {
                 analytics?.logEvent(name, params)
-                Log.d("FirebaseManager", "Logged Analytics Event: $name, parameters: $params")
+                Timber.d("FirebaseManager", "Logged Analytics Event: $name, parameters: $params")
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error logging Analytics Event: ${e.message}")
+                Timber.e("FirebaseManager", "Error logging Analytics Event: ${e.message}")
             }
         } else {
-            Log.d("FirebaseManager", "Sandbox Mode Event Logged: $name, parameters: $params")
+            Timber.d("FirebaseManager", "Sandbox Mode Event Logged: $name, parameters: $params")
         }
     }
 
-    // High-fidelity local state for Sandbox Mode fallback
     private var sandboxUser: UserSession? = null
-    private val sandboxLogs = mutableListOf<AuditLog>()
-    private val sandboxWorkflows = mutableListOf<AutomationWorkflow>()
+
+    private fun getDeviceUid(): String {
+        return try {
+            val androidId = android.provider.Settings.Secure.getString(
+                context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+            )
+            "device_${androidId ?: java.util.UUID.randomUUID().toString().take(8)}"
+        } catch (e: Exception) {
+            "device_${java.util.UUID.randomUUID().toString().take(8)}"
+        }
+    }
 
     fun signInWithEmail(email: String, name: String) {
         if (_isFirebaseAvailable.value && auth != null) {
-            // Create or sign in user. To make it extremely easy to test,
-            // we do a passwordless flow or simple sign in if exists, otherwise create.
             auth?.signInWithEmailAndPassword(email, "devapi1234")
                 ?.addOnFailureListener {
-                    // Try to create the user if they don't exist
                     auth?.createUserWithEmailAndPassword(email, "devapi1234")
                         ?.addOnSuccessListener { result ->
-                            // Update display name
                             val profileUpdates = com.google.firebase.auth.userProfileChangeRequest {
                                 displayName = name
                             }
@@ -86,12 +94,10 @@ class FirebaseManager(private val context: Context) {
                         }
                 }
         } else {
-            // Local fallback session
             sandboxUser = UserSession(
-                uid = "sandbox_user_123",
+                uid = getDeviceUid(),
                 email = email,
                 displayName = name,
-                photoUrl = "https://lh3.googleusercontent.com/a/default-user=s96-c",
                 isSandbox = true
             )
             _currentUserFlow.value = sandboxUser
@@ -103,15 +109,14 @@ class FirebaseManager(private val context: Context) {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             auth?.signInWithCredential(credential)
                 ?.addOnFailureListener {
-                    // Fall back to sign in with email if credential fails
                     signInWithEmail(email, name)
                 }
         } else {
             sandboxUser = UserSession(
-                uid = "google_oauth_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8),
+                uid = getDeviceUid(),
                 email = email,
                 displayName = name,
-                photoUrl = photoUrl.ifEmpty { "https://lh3.googleusercontent.com/a/default-user=s96-c" },
+                photoUrl = photoUrl,
                 isSandbox = true
             )
             _currentUserFlow.value = sandboxUser
@@ -139,10 +144,10 @@ class FirebaseManager(private val context: Context) {
                     .set(log)
                     .await()
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error saving log to Firestore: ${e.message}")
+                Timber.e("FirebaseManager", "Error saving log to Firestore: ${e.message}")
             }
         } else {
-            sandboxLogs.add(0, log) // Add to top
+            db?.auditLogDao()?.insert(log.toEntity())
         }
     }
 
@@ -158,11 +163,11 @@ class FirebaseManager(private val context: Context) {
                     .await()
                 snapshot.toObjects(AuditLog::class.java)
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error loading logs: ${e.message}")
+                Timber.e("FirebaseManager", "Error loading logs: ${e.message}")
                 emptyList()
             }
         } else {
-            return sandboxLogs
+            return db?.auditLogDao()?.getAll()?.map { it.toAuditLog() } ?: emptyList()
         }
     }
 
@@ -178,15 +183,10 @@ class FirebaseManager(private val context: Context) {
                     .set(workflow)
                     .await()
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error saving workflow to Firestore: ${e.message}")
+                Timber.e("FirebaseManager", "Error saving workflow to Firestore: ${e.message}")
             }
         } else {
-            val index = sandboxWorkflows.indexOfFirst { it.id == workflow.id }
-            if (index >= 0) {
-                sandboxWorkflows[index] = workflow
-            } else {
-                sandboxWorkflows.add(workflow)
-            }
+            db?.workflowDao()?.insert(workflow.toEntity())
         }
     }
 
@@ -201,34 +201,29 @@ class FirebaseManager(private val context: Context) {
                     .await()
                 val list = snapshot.toObjects(AutomationWorkflow::class.java)
                 if (list.isEmpty()) {
-                    // Populate default workflows
                     getDefaultWorkflows().forEach { saveWorkflow(it) }
                     getDefaultWorkflows()
                 } else {
                     list
                 }
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error loading workflows: ${e.message}")
+                Timber.e("FirebaseManager", "Error loading workflows: ${e.message}")
                 emptyList()
             }
         } else {
-            if (sandboxWorkflows.isEmpty()) {
-                sandboxWorkflows.addAll(getDefaultWorkflows())
+            val fromDb = db?.workflowDao()?.getAll().orEmpty()
+            if (fromDb.isEmpty()) {
+                val defaults = getDefaultWorkflows()
+                defaults.forEach { db?.workflowDao()?.insert(it.toEntity()) }
+                return defaults
             }
-            return sandboxWorkflows
+            return fromDb.map { it.toAutomationWorkflow() }
         }
     }
 
     private fun getDefaultWorkflows(): List<AutomationWorkflow> {
-        return listOf(
-            AutomationWorkflow("w1", "Clipboard Synchronizer", "Automatically mirror desktop copy operations to smartphone clipboard", "On Desktop Copy", "Write Local Clipboard", true),
-            AutomationWorkflow("w2", "Proximity Camera Capture", "Activate camera stream when desktop comes within Bluetooth range", "On Proximity Trigger", "Start Camera Stream", false),
-            AutomationWorkflow("w3", "Energy Saver Mode", "Notify desktop to lower streaming frames when smartphone battery is low", "Battery < 20%", "Limit Frame Rate (15 FPS)", true),
-            AutomationWorkflow("w4", "Biometric Desktop Unlock", "Use phone fingerprint reader to unlock paired desktop computer", "On Desktop Lockscreen Request", "Request Biometric Challenge", false)
-        )
+        return emptyList()
     }
-
-    private var sandboxAdminProfile: AdminProfile? = null
 
     suspend fun saveAdminProfile(profile: AdminProfile) {
         val user = _currentUserFlow.value ?: return
@@ -241,10 +236,10 @@ class FirebaseManager(private val context: Context) {
                     .set(profile)
                     .await()
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error saving admin profile to Firestore: ${e.message}")
+                Timber.e("FirebaseManager", "Error saving admin profile to Firestore: ${e.message}")
             }
         } else {
-            sandboxAdminProfile = profile
+            db?.adminProfileDao()?.insert(profile.toEntity())
         }
     }
 
@@ -265,21 +260,56 @@ class FirebaseManager(private val context: Context) {
                     apiKey = "pk_live_" + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
                 )
             } catch (e: Exception) {
-                Log.e("FirebaseManager", "Error getting admin profile: ${e.message}")
+                Timber.e("FirebaseManager", "Error getting admin profile: ${e.message}")
                 AdminProfile(uid = user.uid, displayName = user.displayName, email = user.email)
             }
         } else {
-            if (sandboxAdminProfile == null) {
-                sandboxAdminProfile = AdminProfile(
-                    uid = user.uid,
-                    displayName = user.displayName,
-                    email = user.email,
-                    apiKey = "pk_sandbox_" + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
-                )
-            }
-            return sandboxAdminProfile!!
+            val fromDb = db?.adminProfileDao()?.getByUid(user.uid)
+            if (fromDb != null) return fromDb.toAdminProfile()
+            val fresh = AdminProfile(
+                uid = user.uid,
+                displayName = user.displayName,
+                email = user.email,
+                apiKey = "pk_live_" + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+            )
+            db?.adminProfileDao()?.insert(fresh.toEntity())
+            return fresh
         }
     }
+
+    private fun AuditLog.toEntity() = AuditLogEntity(
+        id = id, timestamp = timestamp, method = method,
+        endpoint = endpoint, caller = caller, status = status,
+        payload = payload, type = type
+    )
+
+    private fun AuditLogEntity.toAuditLog() = AuditLog(
+        id = id, timestamp = timestamp, method = method,
+        endpoint = endpoint, caller = caller, status = status,
+        payload = payload, type = type
+    )
+
+    private fun AutomationWorkflow.toEntity() = WorkflowEntity(
+        id = id, title = title, description = description,
+        trigger = trigger, action = action, isActive = isActive
+    )
+
+    private fun WorkflowEntity.toAutomationWorkflow() = AutomationWorkflow(
+        id = id, title = title, description = description,
+        trigger = trigger, action = action, isActive = isActive
+    )
+
+    private fun AdminProfile.toEntity() = AdminProfileEntity(
+        uid = uid, displayName = displayName, email = email,
+        organization = organization, developerRole = developerRole,
+        apiKey = apiKey, maxDevices = maxDevices, securityLevel = securityLevel
+    )
+
+    private fun AdminProfileEntity.toAdminProfile() = AdminProfile(
+        uid = uid, displayName = displayName, email = email,
+        organization = organization, developerRole = developerRole,
+        apiKey = apiKey, maxDevices = maxDevices, securityLevel = securityLevel
+    )
 
     private fun FirebaseUser.toUserSession() = UserSession(
         uid = uid,

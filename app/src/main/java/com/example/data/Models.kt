@@ -1,7 +1,7 @@
 package com.example.data
 
 enum class ConnectionStatus {
-    CONNECTED, CONNECTING, DISCONNECTED
+    CONNECTED, CONNECTING, DISCONNECTED, FAILED
 }
 
 data class ConnectionState(

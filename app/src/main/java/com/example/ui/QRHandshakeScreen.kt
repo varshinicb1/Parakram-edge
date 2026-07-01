@@ -1,5 +1,6 @@
 package com.example.ui
 
+import timber.log.Timber
 import android.Manifest
 import android.content.Context
 import android.os.Build
@@ -123,7 +124,6 @@ fun QRHandshakeScreen(
         ) { status ->
             when (status) {
                 ConnectionStatus.CONNECTED -> {
-                    // Success View
                     PairingSuccessFeedbackView(
                         deviceName = connectionState.pairedDeviceName ?: "Windows Agent",
                         deviceIp = connectionState.pairedDeviceIp ?: "N/A",
@@ -133,8 +133,26 @@ fun QRHandshakeScreen(
                     )
                 }
                 ConnectionStatus.CONNECTING -> {
-                    // Handshake processing view
                     HandshakingProgressView()
+                }
+                ConnectionStatus.FAILED -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = CyberRed, modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("Connection Failed", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("Could not reach the target device.", color = TextSecondary, fontSize = 13.sp)
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = { viewModel.disconnectDevice() }) {
+                            Text("Retry")
+                        }
+                    }
                 }
                 ConnectionStatus.DISCONNECTED -> {
                     // Primary pairing screen showing either QR Scan or QR Server code
@@ -399,7 +417,7 @@ fun ScanWindowsQrTabContent(
                                         preview
                                     )
                                 } catch (e: Exception) {
-                                    android.util.Log.e("ScanQR", "Failed to bind camera: ${e.message}")
+                                    Timber.e("ScanQR", "Failed to bind camera: ${e.message}")
                                 }
                             }, ContextCompat.getMainExecutor(ctx))
                             previewView

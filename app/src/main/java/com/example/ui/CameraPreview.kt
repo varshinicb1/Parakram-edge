@@ -1,5 +1,6 @@
 package com.example.ui
 
+import timber.log.Timber
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -50,7 +51,7 @@ fun CameraPreview(
                         imageAnalysis
                     )
                 } catch (e: Exception) {
-                    android.util.Log.e("CameraPreview", "Failed to bind camera: ${e.message}")
+                    Timber.e("CameraPreview", "Failed to bind camera: ${e.message}")
                 }
             }, ContextCompat.getMainExecutor(context))
             previewView
