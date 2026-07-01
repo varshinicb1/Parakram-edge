@@ -188,7 +188,11 @@ To provide top-tier desktop orchestration synergy, Parakram registers home scree
    ```bash
    gradle :app:testDebugUnitTest
    ```
-3. **Run on Device / Emulator**:
+3. **Windows Companion**:
+   ```bash
+   cd companion && go build -ldflags="-s -w" -o parakram-companion.exe .
+   ```
+4. **Run on Device / Emulator**:
    * Install the generated APK found in `/app/build/outputs/apk/debug/`.
    * Enable desired server modules (Files, Database, Terminal, Media Stream).
    * Authorize necessary permissions via the streamlined **"GRANT ALL PERMISSIONS"** single-line layout.
